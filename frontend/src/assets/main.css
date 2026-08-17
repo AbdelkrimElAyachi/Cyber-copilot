@@ -1,0 +1,110 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #334155 transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface-900 border border-surface-700/50 rounded-lg;
+  }
+
+  .card-padded {
+    @apply card p-5;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface-900;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent text-white hover:bg-accent-dark focus:ring-accent;
+  }
+
+  .btn-secondary {
+    @apply btn bg-surface-700 text-surface-200 hover:bg-surface-600 focus:ring-surface-500;
+  }
+
+  .btn-danger {
+    @apply btn bg-red-600/20 text-red-400 hover:bg-red-600/30 focus:ring-red-500;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-surface-400 hover:text-surface-200 hover:bg-surface-800;
+  }
+
+  .input-field {
+    @apply w-full px-3 py-2 bg-surface-800 border border-surface-600 rounded-md text-surface-200 text-sm placeholder-surface-500 focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors;
+  }
+
+  .select-field {
+    @apply input-field appearance-none cursor-pointer;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-severity-critical {
+    @apply badge bg-severity-critical/15 text-severity-critical;
+  }
+
+  .badge-severity-high {
+    @apply badge bg-severity-high/15 text-severity-high;
+  }
+
+  .badge-severity-medium {
+    @apply badge bg-severity-medium/15 text-severity-medium;
+  }
+
+  .badge-severity-low {
+    @apply badge bg-severity-low/15 text-severity-low;
+  }
+
+  .badge-status-queued {
+    @apply badge bg-status-queued/15 text-status-queued;
+  }
+
+  .badge-status-investigating {
+    @apply badge bg-status-investigating/15 text-status-investigating;
+  }
+
+  .badge-status-closed {
+    @apply badge bg-status-closed/15 text-status-closed;
+  }
+
+  .table-row {
+    @apply border-b border-surface-800 hover:bg-surface-800/50 transition-colors;
+  }
+
+  .section-title {
+    @apply text-lg font-semibold text-surface-100;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-surface-400 mb-1;
+  }
+}
