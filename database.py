@@ -167,6 +167,26 @@ _TABLES: list[tuple[str, str]] = [
         )
         """,
     ),
+    (
+        "poller_state",
+        """
+        CREATE TABLE IF NOT EXISTS poller_state (
+            id              CHAR(36)     PRIMARY KEY,
+            poller_name     VARCHAR(100) NOT NULL UNIQUE,
+            last_timestamp  VARCHAR(50),
+            last_run_at     DATETIME,
+            status          VARCHAR(30)  NOT NULL DEFAULT 'idle',
+            alerts_fetched  INT          NOT NULL DEFAULT 0,
+            investigations_created INT   NOT NULL DEFAULT 0,
+            total_runs      INT          NOT NULL DEFAULT 0,
+            total_created   INT          NOT NULL DEFAULT 0,
+            error_message   TEXT,
+            created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+                            ON UPDATE CURRENT_TIMESTAMP
+        )
+        """,
+    ),
 ]
 
 
@@ -191,6 +211,8 @@ class Database:
             "user": user,
             "password": password,
             "database": database,
+            "use_pure": True,
+            "ssl_disabled": True,
         }
         self._conn: Optional[mysql.connector.MySQLConnection] = None
 
@@ -230,8 +252,17 @@ class Database:
     @property
     def connection(self) -> mysql.connector.MySQLConnection:
         """Return the active connection, reconnecting if necessary."""
-        if self._conn is None or not self._conn.is_connected():
-            self.connect()
+        try:
+            if self._conn is not None and self._conn.is_connected():
+                return self._conn  # type: ignore[return-value]
+        except Exception:
+            # Connection is corrupted — force close and reconnect.
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+        self.connect()
         return self._conn  # type: ignore[return-value]
 
     # ── schema management ───────────────────────────────────────────────

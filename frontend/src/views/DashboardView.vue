@@ -1,7 +1,8 @@
 <script setup>
-import { onMounted, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useInvestigationsStore } from '../stores/investigations.js'
+import { systemApi } from '../api/system.js'
 import StatCard from '../components/common/StatCard.vue'
 import SeverityBadge from '../components/common/SeverityBadge.vue'
 import StatusBadge from '../components/common/StatusBadge.vue'
@@ -10,14 +11,43 @@ import LoadingSpinner from '../components/common/LoadingSpinner.vue'
 const store = useInvestigationsStore()
 const router = useRouter()
 
-onMounted(() => {
+const pollerStatus = ref(null)
+
+onMounted(async () => {
   store.fetchInvestigations()
+  pollerStatus.value = await systemApi.getPollerStatus()
 })
 
 const stats = computed(() => store.stats)
 const recent = computed(() => store.recentInvestigations)
 
+const pollerState = computed(() => {
+  const p = pollerStatus.value
+  if (!p) return null
+  return {
+    status: p.status || 'unknown',
+    lastRun: p.last_run_at,
+    lastTimestamp: p.last_timestamp,
+    alertsFetched: p.alerts_fetched ?? 0,
+    created: p.investigations_created ?? 0,
+    totalRuns: p.total_runs ?? 0,
+    totalCreated: p.total_created ?? 0,
+    error: p.error_message,
+    notStarted: p.status === 'not_started',
+  }
+})
+
+const pollerStatusColor = computed(() => {
+  if (!pollerState.value) return 'bg-surface-600'
+  const s = pollerState.value.status
+  if (s === 'running') return 'bg-severity-low animate-pulse'
+  if (s === 'error') return 'bg-severity-critical'
+  if (s === 'idle') return 'bg-severity-low'
+  return 'bg-surface-600'
+})
+
 function timeAgo(dateStr) {
+  if (!dateStr) return '—'
   const now = new Date()
   const date = new Date(dateStr)
   const seconds = Math.floor((now - date) / 1000)
@@ -61,6 +91,47 @@ function openInvestigation(row) {
           <StatCard title="High" :value="stats.high" color="high" />
           <StatCard title="Medium" :value="stats.medium" color="medium" />
           <StatCard title="Low" :value="stats.low" color="low" />
+        </div>
+      </div>
+
+      <!-- Alert Poller Status -->
+      <div class="card-padded">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="section-title">Alert Poller</h2>
+          <div v-if="pollerState" class="flex items-center gap-2 text-xs text-surface-400">
+            <span class="w-2 h-2 rounded-full" :class="pollerStatusColor" />
+            {{ pollerState.status }}
+          </div>
+        </div>
+
+        <div v-if="!pollerState || pollerState.notStarted" class="text-sm text-surface-500">
+          <p>Poller has not been started yet. Run it to pull alerts from Wazuh:</p>
+          <code class="block mt-2 px-3 py-2 bg-surface-950 rounded text-xs font-mono text-surface-400">
+            python poll_alerts.py --loop
+          </code>
+        </div>
+
+        <div v-else-if="pollerState.error" class="text-sm">
+          <p class="text-severity-critical">{{ pollerState.error }}</p>
+        </div>
+
+        <div v-else class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div>
+            <p class="text-xs font-medium text-surface-500 uppercase tracking-wider">Last Run</p>
+            <p class="text-sm text-surface-200 mt-1">{{ timeAgo(pollerState.lastRun) }}</p>
+          </div>
+          <div>
+            <p class="text-xs font-medium text-surface-500 uppercase tracking-wider">Last Fetch</p>
+            <p class="text-sm text-surface-200 mt-1">{{ pollerState.alertsFetched }} alerts</p>
+          </div>
+          <div>
+            <p class="text-xs font-medium text-surface-500 uppercase tracking-wider">Total Runs</p>
+            <p class="text-sm text-surface-200 mt-1">{{ pollerState.totalRuns }}</p>
+          </div>
+          <div>
+            <p class="text-xs font-medium text-surface-500 uppercase tracking-wider">Total Created</p>
+            <p class="text-sm text-surface-200 mt-1">{{ pollerState.totalCreated }} investigations</p>
+          </div>
         </div>
       </div>
 
