@@ -1,15 +1,17 @@
 """
-Database — MySQL connection and schema management for the investigation platform.
+Database — MySQL connection pool and schema management for the investigation platform.
 
-This module owns every table that belongs to our platform (as opposed to
-the Wazuh Indexer, Suricata, etc., which are external data sources).
+Uses SQLAlchemy's connection pool for thread-safe database access.
+Each query gets its own connection from the pool, uses it, and returns it.
+This is safe to use from FastAPI's multi-threaded request handlers.
 
 Usage:
     from database import Database
 
     db = Database()              # reads connection settings from .env
+    db.connect()                 # creates the engine + pool
     db.init_tables()             # creates tables if they don't exist
-    db.close()
+    db.close()                   # disposes the pool
 
 All tables use CHAR(36) UUIDs as primary keys so records are easy to
 reference across services.
@@ -20,9 +22,10 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import quote_plus
 
-import mysql.connector
-from mysql.connector import Error as MySQLError
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 
 
 # ── Schema ──────────────────────────────────────────────────────────────
@@ -191,10 +194,10 @@ _TABLES: list[tuple[str, str]] = [
 
 
 class Database:
-    """Manages the MySQL connection and provides simple query helpers.
+    """Thread-safe MySQL database access using SQLAlchemy's connection pool.
 
-    Reads connection parameters from environment variables (loaded via
-    python-dotenv elsewhere or passed explicitly).
+    Each query method gets its own connection from the pool, uses it,
+    and returns it when done. Safe for concurrent use from multiple threads.
     """
 
     def __init__(
@@ -205,75 +208,65 @@ class Database:
         password: str = "987654321GO",
         database: str = "cyber_copilot",
     ) -> None:
-        self._config = {
-            "host": host,
-            "port": port,
-            "user": user,
-            "password": password,
-            "database": database,
-            "use_pure": True,
-            "ssl_disabled": True,
-        }
-        self._conn: Optional[mysql.connector.MySQLConnection] = None
+        self._host = host
+        self._port = port
+        self._user = user
+        self._password = password
+        self._database = database
+        self._engine: Optional[Engine] = None
+
+    def _make_url(self, database: str = "") -> str:
+        """Build a SQLAlchemy connection URL."""
+        pwd = quote_plus(self._password)
+        db = f"/{database}" if database else ""
+        return f"mysql+pymysql://{self._user}:{pwd}@{self._host}:{self._port}{db}"
 
     # ── connection management ───────────────────────────────────────────
 
     def connect(self) -> None:
-        """Open a connection to MySQL.
+        """Create the connection pool engine.
 
         The target database is created automatically if it doesn't exist.
         """
-        db_name = self._config.pop("database")
-
-        try:
-            # Connect without selecting a database first.
-            self._conn = mysql.connector.connect(**self._config)
-            cursor = self._conn.cursor()
-            cursor.execute(
-                f"CREATE DATABASE IF NOT EXISTS `{db_name}`"
+        # First, connect without a database to ensure it exists.
+        bootstrap_engine = create_engine(self._make_url(), pool_pre_ping=True)
+        with bootstrap_engine.connect() as conn:
+            conn.exec_driver_sql(
+                f"CREATE DATABASE IF NOT EXISTS `{self._database}`"
             )
-            cursor.close()
-            self._conn.database = db_name
-        except MySQLError as exc:
-            raise ConnectionError(
-                f"Could not connect to MySQL at "
-                f"{self._config['host']}:{self._config['port']}: {exc}"
-            ) from exc
-        finally:
-            # Restore config so connect() is idempotent.
-            self._config["database"] = db_name
+            conn.commit()
+        bootstrap_engine.dispose()
+
+        # Now create the real pooled engine.
+        self._engine = create_engine(
+            self._make_url(self._database),
+            pool_size=5,
+            max_overflow=10,
+            pool_recycle=3600,
+            pool_pre_ping=True,
+        )
 
     def close(self) -> None:
-        """Close the MySQL connection if open."""
-        if self._conn and self._conn.is_connected():
-            self._conn.close()
-            self._conn = None
+        """Dispose the connection pool."""
+        if self._engine is not None:
+            self._engine.dispose()
+            self._engine = None
 
     @property
-    def connection(self) -> mysql.connector.MySQLConnection:
-        """Return the active connection, reconnecting if necessary."""
-        try:
-            if self._conn is not None and self._conn.is_connected():
-                return self._conn  # type: ignore[return-value]
-        except Exception:
-            # Connection is corrupted — force close and reconnect.
-            try:
-                self._conn.close()
-            except Exception:
-                pass
-            self._conn = None
-        self.connect()
-        return self._conn  # type: ignore[return-value]
+    def engine(self) -> Engine:
+        """Return the SQLAlchemy engine, connecting if necessary."""
+        if self._engine is None:
+            self.connect()
+        return self._engine  # type: ignore[return-value]
 
     # ── schema management ───────────────────────────────────────────────
 
     def init_tables(self) -> None:
         """Create all platform tables if they don't already exist."""
-        cursor = self.connection.cursor()
-        for _name, ddl in _TABLES:
-            cursor.execute(ddl)
-        self.connection.commit()
-        cursor.close()
+        with self.engine.connect() as conn:
+            for _name, ddl in _TABLES:
+                conn.exec_driver_sql(ddl)
+            conn.commit()
 
     # ── query helpers ───────────────────────────────────────────────────
 
@@ -288,13 +281,11 @@ class Database:
 
         Returns the number of affected rows.
         """
-        cursor = self.connection.cursor()
-        cursor.execute(query, params)
-        if commit:
-            self.connection.commit()
-        affected = cursor.rowcount
-        cursor.close()
-        return affected
+        with self.engine.connect() as conn:
+            result = conn.exec_driver_sql(query, params or ())
+            if commit:
+                conn.commit()
+            return result.rowcount
 
     def fetchone(
         self,
@@ -302,11 +293,10 @@ class Database:
         params: Optional[tuple] = None,
     ) -> Optional[dict[str, Any]]:
         """Execute a SELECT and return the first row as a dict (or None)."""
-        cursor = self.connection.cursor(dictionary=True)
-        cursor.execute(query, params)
-        row = cursor.fetchone()
-        cursor.close()
-        return row
+        with self.engine.connect() as conn:
+            result = conn.exec_driver_sql(query, params or ())
+            row = result.fetchone()
+            return dict(row._mapping) if row else None
 
     def fetchall(
         self,
@@ -314,11 +304,9 @@ class Database:
         params: Optional[tuple] = None,
     ) -> list[dict[str, Any]]:
         """Execute a SELECT and return all rows as a list of dicts."""
-        cursor = self.connection.cursor(dictionary=True)
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        cursor.close()
-        return rows
+        with self.engine.connect() as conn:
+            result = conn.exec_driver_sql(query, params or ())
+            return [dict(row._mapping) for row in result.fetchall()]
 
 
 # ── helpers ─────────────────────────────────────────────────────────────

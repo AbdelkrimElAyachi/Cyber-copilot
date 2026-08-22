@@ -247,14 +247,8 @@ class PolicyEngine:
         self.create_policy(
             name="High-severity alerts",
             description="Investigate any alert with rule level >= 10.",
-            conditions={"min_level": 10},
+            conditions={"min_level": 8},
             priority=10,
-        )
-        self.create_policy(
-            name="Critical-severity alerts",
-            description="Investigate any alert with rule level >= 13.",
-            conditions={"min_level": 13},
-            priority=20,
         )
 
 
