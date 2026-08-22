@@ -39,6 +39,18 @@ from investigation_manager import InvestigationManager
 POLLER_NAME = "wazuh_alert_poller"
 
 
+def _parse_timestamp(ts: str) -> datetime:
+    """Parse an ISO-8601 timestamp, handling offsets with or without colons.
+
+    Python 3.10's fromisoformat() doesn't accept '+0100' — only '+01:00'.
+    Wazuh timestamps often use the no-colon format.
+    """
+    import re
+    # Fix timezone offset without colon: +0100 → +01:00, -0530 → -05:30
+    ts = re.sub(r'([+-])(\d{2})(\d{2})$', r'\1\2:\3', ts)
+    return datetime.fromisoformat(ts)
+
+
 # ── Watermark (database-backed) ────────────────────────────────────────
 
 def get_or_create_state(db: Database) -> dict:
@@ -124,8 +136,16 @@ def run_once(
                  last_run_at=datetime.now(timezone.utc))
 
     if watermark:
-        from_time = datetime.fromisoformat(watermark)
-        print(f"[Poller] Fetching alerts since watermark: {watermark}")
+        from_time = _parse_timestamp(watermark)
+        # When --hours is passed with an existing watermark, use whichever
+        # reaches further back in time.
+        hours_ago = datetime.now(timezone.utc) - timedelta(hours=initial_hours)
+        if hours_ago < from_time:
+            from_time = hours_ago
+            print(f"[Poller] --hours {initial_hours} reaches further back than watermark, "
+                  f"using {from_time.isoformat()}")
+        else:
+            print(f"[Poller] Fetching alerts since watermark: {watermark}")
     else:
         from_time = datetime.now(timezone.utc) - timedelta(hours=initial_hours)
         print(f"[Poller] No watermark. Fetching last {initial_hours}h "
