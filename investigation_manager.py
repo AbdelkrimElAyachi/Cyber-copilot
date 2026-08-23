@@ -176,6 +176,9 @@ class InvestigationManager:
         rule = alert.get("rule", {})
         agent = alert.get("agent", {})
 
+        # Auto-create the asset if the agent doesn't exist yet.
+        self._ensure_asset(alert)
+
         title = (
             f"[{rule.get('id', '?')}] "
             f"{rule.get('description', 'Wazuh alert investigation')}"
@@ -207,6 +210,56 @@ class InvestigationManager:
             f"for alert {alert_id} (policy: '{policy['name']}')"
         )
         return investigation_id
+
+    def _ensure_asset(self, alert: dict[str, Any]) -> None:
+        """Create an asset from the alert's agent if it doesn't exist yet.
+
+        Wazuh alerts contain agent info like:
+            {"agent": {"id": "001", "name": "web-server", "ip": "10.0.0.5"}}
+
+        If no asset with that wazuh_agent_id exists, one is created.
+        """
+        agent = alert.get("agent", {})
+        agent_id = agent.get("id")
+
+        if not agent_id:
+            return
+
+        # Check if asset already exists for this agent.
+        existing = self._db.fetchone(
+            "SELECT id FROM assets WHERE wazuh_agent_id = %s",
+            (str(agent_id),),
+        )
+        if existing:
+            return
+
+        # Extract what we can from the alert.
+        hostname = agent.get("name", f"agent-{agent_id}")
+        ip_address = agent.get("ip")
+        os_info = alert.get("syscheck", {}).get("path", None)
+        # Try to detect OS from predecoder or agent fields.
+        predecoder = alert.get("predecoder", {})
+        manager = alert.get("manager", {})
+
+        asset_id = new_id()
+        self._db.execute(
+            "INSERT INTO assets "
+            "(id, hostname, ip_address, asset_type, wazuh_agent_id, os, notes) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (
+                asset_id,
+                hostname,
+                ip_address,
+                "endpoint",
+                str(agent_id),
+                None,
+                f"Auto-discovered from Wazuh agent {agent_id}.",
+            ),
+        )
+        print(
+            f"[InvestigationManager] Asset {asset_id} created "
+            f"for agent {agent_id} ({hostname})"
+        )
 
 
 # ── helpers ─────────────────────────────────────────────────────────────
