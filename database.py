@@ -183,6 +183,8 @@ _TABLES: list[tuple[str, str]] = [
             investigations_created INT   NOT NULL DEFAULT 0,
             total_runs      INT          NOT NULL DEFAULT 0,
             total_created   INT          NOT NULL DEFAULT 0,
+            interval_seconds INT         NOT NULL DEFAULT 60,
+            lookback_hours  INT          NOT NULL DEFAULT 24,
             error_message   TEXT,
             created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -266,6 +268,17 @@ class Database:
         with self.engine.connect() as conn:
             for _name, ddl in _TABLES:
                 conn.exec_driver_sql(ddl)
+            # Migrate: add config columns to poller_state if missing.
+            for col, defn in [
+                ("interval_seconds", "INT NOT NULL DEFAULT 60"),
+                ("lookback_hours", "INT NOT NULL DEFAULT 24"),
+            ]:
+                try:
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE poller_state ADD COLUMN {col} {defn}"
+                    )
+                except Exception:
+                    pass  # Column already exists.
             conn.commit()
 
     # ── query helpers ───────────────────────────────────────────────────

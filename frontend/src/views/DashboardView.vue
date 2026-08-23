@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useInvestigationsStore } from '../stores/investigations.js'
-import { systemApi } from '../api/system.js'
+import { pollerApi } from '../api/system.js'
 import StatCard from '../components/common/StatCard.vue'
 import SeverityBadge from '../components/common/SeverityBadge.vue'
 import StatusBadge from '../components/common/StatusBadge.vue'
@@ -15,7 +15,7 @@ const pollerStatus = ref(null)
 
 onMounted(async () => {
   store.fetchInvestigations()
-  pollerStatus.value = await systemApi.getPollerStatus()
+  pollerStatus.value = await pollerApi.getStatus()
 })
 
 const stats = computed(() => store.stats)
