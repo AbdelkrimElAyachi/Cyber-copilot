@@ -30,6 +30,17 @@ export const investigationsApi = {
     }
   },
 
+  async delete(id) {
+    return await api.delete(`/investigations/${id}`)
+  },
+
+  // Kicks off (or re-runs) the AI Investigator for this investigation.
+  // Runs in the background on the server — errors (no AI configured,
+  // already running, alert not found) are surfaced, not swallowed.
+  async investigate(id) {
+    return await api.post(`/investigations/${id}/investigate`, {})
+  },
+
   async getEvidence(investigationId) {
     try {
       return await api.get(`/investigations/${investigationId}/evidence`)

@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 from alert_receiver import AlertReceiver
 from database import Database, new_id
-from investigation_manager import InvestigationManager
+from investigation_manager import InvestigationManager, Outcome
 from investigation_policy import PolicyEngine
 
 logger = logging.getLogger("poller")
@@ -42,11 +42,13 @@ class PollerService:
         policy_engine: PolicyEngine,
         investigation_manager: InvestigationManager,
         alert_receiver: Optional[AlertReceiver] = None,
+        ai_investigator: Optional[Any] = None,
     ) -> None:
         self._db = db
         self._engine = policy_engine
         self._manager = investigation_manager
         self._receiver = alert_receiver
+        self._investigator = ai_investigator
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._interval: int = 60
@@ -240,6 +242,21 @@ class PollerService:
 
         # Process alerts through the investigation manager
         results = self._manager.process_alerts(alerts)
+
+        # Hand each newly created investigation to the AI Investigator.
+        # Runs synchronously in this poll cycle — simplest option while
+        # investigation volume is low; revisit if it becomes a bottleneck.
+        if self._investigator is not None:
+            for alert, result in zip(alerts, results):
+                if result.outcome is not Outcome.CREATED:
+                    continue
+                try:
+                    self._investigator.investigate(result.investigation_id, alert)
+                except Exception as e:
+                    logger.error(
+                        "AI investigation failed for %s: %s",
+                        result.investigation_id, e,
+                    )
 
         # Find the latest alert timestamp for the watermark
         latest_ts = None

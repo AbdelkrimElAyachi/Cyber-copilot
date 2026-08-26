@@ -8,7 +8,11 @@ const props = defineProps({
 
 const statusMap = {
   QUEUED: { class: 'badge-status-queued', label: 'Queued' },
+  // IN_PROGRESS is what the AI Investigator actually sets while it runs;
+  // INVESTIGATING is kept for older/mock data using the earlier name.
+  IN_PROGRESS: { class: 'badge-status-investigating', label: 'Investigating' },
   INVESTIGATING: { class: 'badge-status-investigating', label: 'Investigating' },
+  COMPLETED: { class: 'badge bg-emerald-500/15 text-emerald-400', label: 'Completed' },
   CLOSED: { class: 'badge-status-closed', label: 'Closed' },
   pending: { class: 'badge bg-amber-500/15 text-amber-400', label: 'Pending' },
   completed: { class: 'badge bg-emerald-500/15 text-emerald-400', label: 'Completed' },

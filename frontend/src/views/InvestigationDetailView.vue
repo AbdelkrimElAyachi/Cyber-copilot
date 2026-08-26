@@ -128,7 +128,7 @@ const timeline = computed(() => {
     items.push({
       type: 'action',
       title: `Action: ${a.action_type.replace(/_/g, ' ')}`,
-      description: a.description,
+      description: a.reasoning || a.description,
       timestamp: a.created_at,
       icon: 'action',
       status: a.status,
@@ -147,6 +147,43 @@ const actionTypeIcons = {
 
 async function updateStatus(newStatus) {
   await store.updateInvestigation(route.params.id, { status: newStatus })
+}
+
+const starting = ref(false)
+const investigateError = ref('')
+
+async function startInvestigation() {
+  starting.value = true
+  investigateError.value = ''
+  try {
+    await store.startInvestigation(route.params.id)
+  } catch (err) {
+    investigateError.value = err.message || 'Failed to start investigation.'
+  } finally {
+    starting.value = false
+  }
+}
+
+const deleting = ref(false)
+
+async function deleteInvestigation() {
+  if (!confirm('Delete this investigation? This permanently removes its evidence, analysis, and actions too.')) return
+  deleting.value = true
+  try {
+    await store.deleteInvestigation(route.params.id)
+    router.push('/investigations')
+  } catch (err) {
+    investigateError.value = err.message || 'Failed to delete investigation.'
+  } finally {
+    deleting.value = false
+  }
+}
+
+const verdictStyles = {
+  TRUE_POSITIVE: 'bg-severity-high/15 text-severity-high',
+  FALSE_POSITIVE: 'bg-severity-low/15 text-severity-low',
+  NEEDS_REVIEW: 'bg-severity-medium/15 text-severity-medium',
+  ERROR: 'bg-severity-critical/15 text-severity-critical',
 }
 </script>
 
@@ -180,12 +217,19 @@ async function updateStatus(newStatus) {
           <button
             v-if="investigation.status === 'QUEUED'"
             class="btn-primary text-xs"
-            @click="updateStatus('INVESTIGATING')"
+            :disabled="starting"
+            @click="startInvestigation"
           >
-            Start Investigation
+            {{ starting ? 'Starting…' : '🤖 Start Investigation' }}
           </button>
+          <span
+            v-if="investigation.status === 'IN_PROGRESS'"
+            class="badge bg-accent/15 text-accent text-xs animate-pulse"
+          >
+            🤖 AI investigating…
+          </span>
           <button
-            v-if="investigation.status === 'INVESTIGATING'"
+            v-if="investigation.status === 'COMPLETED'"
             class="btn-secondary text-xs"
             @click="updateStatus('CLOSED')"
           >
@@ -194,10 +238,19 @@ async function updateStatus(newStatus) {
           <button
             v-if="investigation.status === 'CLOSED'"
             class="btn-ghost text-xs"
-            @click="updateStatus('INVESTIGATING')"
+            @click="updateStatus('COMPLETED')"
           >
             Reopen
           </button>
+          <button
+            class="btn-danger text-xs ml-auto"
+            :disabled="deleting"
+            @click="deleteInvestigation"
+          >
+            {{ deleting ? 'Deleting…' : 'Delete Investigation' }}
+          </button>
+          <span v-if="investigateError" class="text-xs text-severity-critical w-full">{{ investigateError }}</span>
+          <span v-else-if="store.error && investigation.status === 'IN_PROGRESS'" class="text-xs text-severity-medium w-full">{{ store.error }}</span>
         </div>
       </div>
 
@@ -283,6 +336,13 @@ async function updateStatus(newStatus) {
                 <span class="badge bg-accent/15 text-accent">
                   {{ an.analysis_type === 'ai' ? '🤖 AI Analysis' : an.analysis_type }}
                 </span>
+                <span
+                  v-if="an.verdict"
+                  class="badge"
+                  :class="verdictStyles[an.verdict] || 'bg-surface-700 text-surface-300'"
+                >
+                  {{ an.verdict.replace(/_/g, ' ') }}
+                </span>
                 <span v-if="an.model_id" class="text-xs font-mono text-surface-500">{{ an.model_id }}</span>
               </div>
               <span class="text-xs text-surface-500">{{ formatDate(an.created_at) }}</span>
@@ -325,6 +385,10 @@ async function updateStatus(newStatus) {
                     <p class="text-xs text-surface-400 mt-0.5">{{ act.description }}</p>
                   </div>
                   <StatusBadge :status="act.status" />
+                </div>
+
+                <div v-if="act.reasoning" class="mt-3 border-l-2 border-accent/40 pl-3">
+                  <p class="text-xs text-surface-300 leading-relaxed italic">{{ act.reasoning }}</p>
                 </div>
 
                 <div v-if="act.result" class="mt-3 bg-surface-950 rounded-md p-3">

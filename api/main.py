@@ -10,6 +10,10 @@ Run with:
 
 from __future__ import annotations
 
+from logging_config import setup_logging
+
+setup_logging()  # before anything else logs, so nothing is missed
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI

@@ -139,6 +139,7 @@ _TABLES: list[tuple[str, str]] = [
             id                CHAR(36)     PRIMARY KEY,
             investigation_id  CHAR(36)     NOT NULL,
             analysis_type     VARCHAR(50)  NOT NULL DEFAULT 'ai',
+            verdict           VARCHAR(30),
             content           TEXT         NOT NULL,
             confidence        FLOAT,
             model_id          VARCHAR(100),
@@ -158,6 +159,7 @@ _TABLES: list[tuple[str, str]] = [
             investigation_id  CHAR(36)     NOT NULL,
             action_type       VARCHAR(50)  NOT NULL,
             description       TEXT         NOT NULL,
+            reasoning         TEXT,
             status            VARCHAR(30)  NOT NULL DEFAULT 'pending',
             result            TEXT,
             performed_by      CHAR(36),
@@ -230,8 +232,18 @@ class Database:
 
         The target database is created automatically if it doesn't exist.
         """
+        # Bound how long a connection attempt / individual query can block
+        # for. Without this, a stuck connection or a lock wait blocks the
+        # caller indefinitely — no exception, nothing to catch — which for
+        # the AI Investigator means a background investigation can hang at
+        # IN_PROGRESS forever instead of surfacing a normal, recoverable
+        # error.
+        _connect_args = {"connect_timeout": 10, "read_timeout": 30, "write_timeout": 30}
+
         # First, connect without a database to ensure it exists.
-        bootstrap_engine = create_engine(self._make_url(), pool_pre_ping=True)
+        bootstrap_engine = create_engine(
+            self._make_url(), pool_pre_ping=True, connect_args=_connect_args
+        )
         with bootstrap_engine.connect() as conn:
             conn.exec_driver_sql(
                 f"CREATE DATABASE IF NOT EXISTS `{self._database}`"
@@ -246,6 +258,7 @@ class Database:
             max_overflow=10,
             pool_recycle=3600,
             pool_pre_ping=True,
+            connect_args=_connect_args,
         )
 
     def close(self) -> None:
@@ -269,13 +282,15 @@ class Database:
             for _name, ddl in _TABLES:
                 conn.exec_driver_sql(ddl)
             # Migrate: add config columns to poller_state if missing.
-            for col, defn in [
-                ("interval_seconds", "INT NOT NULL DEFAULT 60"),
-                ("lookback_hours", "INT NOT NULL DEFAULT 24"),
+            for table, col, defn in [
+                ("poller_state", "interval_seconds", "INT NOT NULL DEFAULT 60"),
+                ("poller_state", "lookback_hours", "INT NOT NULL DEFAULT 24"),
+                ("investigation_analysis", "verdict", "VARCHAR(30)"),
+                ("investigation_actions", "reasoning", "TEXT"),
             ]:
                 try:
                     conn.exec_driver_sql(
-                        f"ALTER TABLE poller_state ADD COLUMN {col} {defn}"
+                        f"ALTER TABLE {table} ADD COLUMN {col} {defn}"
                     )
                 except Exception:
                     pass  # Column already exists.

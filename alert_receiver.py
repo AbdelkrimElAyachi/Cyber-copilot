@@ -59,6 +59,14 @@ class AlertReceiver:
             use_ssl=True,
             verify_certs=verify_ssl,
             ssl_show_warn=False,
+            # Without this, a slow/unresponsive Indexer blocks the caller
+            # indefinitely — no exception, no timeout, nothing to catch.
+            # For the AI Investigator that means a query stuck here never
+            # surfaces as an error and the investigation just hangs at
+            # IN_PROGRESS forever. A hard cap turns that into a normal,
+            # recoverable exception instead.
+            timeout=30,
+            max_retries=0,
         )
         self._index = index_pattern
 
@@ -156,13 +164,26 @@ class AlertReceiver:
         return response["count"]
 
     def get_alert_by_id(self, alert_id: str) -> Optional[dict[str, Any]]:
-        """Fetch a single alert by its OpenSearch document ``_id``.
+        """Fetch a single alert by its Wazuh alert ``id`` field
+        (e.g. ``"1690458983.123456"`` — the value every other part of
+        this app uses to identify an alert).
+
+        This is NOT the OpenSearch document ``_id`` — that's an
+        internal, auto-generated value Wazuh alerts don't expose or
+        track anywhere else, so looking one up by it isn't useful here.
+        A term query against the index pattern is also required
+        regardless, since a single-document GET doesn't work against a
+        wildcard index pattern like ``wazuh-alerts-4.x-*``.
 
         Returns ``None`` if the alert is not found.
         """
         try:
-            response = self._client.get(index=self._index, id=alert_id)
-            return response["_source"]
+            response = self._client.search(
+                index=self._index,
+                body={"size": 1, "query": {"term": {"id": alert_id}}},
+            )
+            hits = response["hits"]["hits"]
+            return hits[0]["_source"] if hits else None
         except Exception:
             return None
 

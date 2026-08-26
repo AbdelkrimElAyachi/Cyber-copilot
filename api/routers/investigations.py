@@ -4,11 +4,16 @@ FastAPI router for the investigations resource.
 
 import json
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from database import Database, new_id
-from api.dependencies import get_db, get_investigation_manager
+from api.dependencies import (
+    get_db,
+    get_investigation_manager,
+    get_ai_investigator,
+    get_alert_receiver,
+)
 
 router = APIRouter(prefix="/investigations", tags=["investigations"])
 
@@ -32,6 +37,7 @@ class EvidenceCreate(BaseModel):
 
 class AnalysisCreate(BaseModel):
     analysis_type: str = "ai"
+    verdict: Optional[str] = None
     content: str
     confidence: Optional[float] = None
     model_id: Optional[str] = None
@@ -40,6 +46,7 @@ class AnalysisCreate(BaseModel):
 class ActionCreate(BaseModel):
     action_type: str
     description: str
+    reasoning: Optional[str] = None
     performed_by: Optional[str] = None
 
 class ActionUpdate(BaseModel):
@@ -117,6 +124,59 @@ def update_investigation(
     db.execute(query, tuple(params))
     return db.fetchone("SELECT * FROM investigations WHERE id = %s", (investigation_id,))
 
+@router.delete("/{investigation_id}", status_code=204)
+def delete_investigation(investigation_id: str, db: Database = Depends(get_db)):
+    """Delete an investigation and everything filed under it.
+
+    There's no ON DELETE CASCADE on these tables, so child rows
+    (evidence/analysis/actions) are removed first, then the
+    investigation itself.
+    """
+    _ensure_investigation_exists(db, investigation_id)
+    db.execute("DELETE FROM investigation_evidence WHERE investigation_id = %s", (investigation_id,))
+    db.execute("DELETE FROM investigation_analysis WHERE investigation_id = %s", (investigation_id,))
+    db.execute("DELETE FROM investigation_actions WHERE investigation_id = %s", (investigation_id,))
+    db.execute("DELETE FROM investigations WHERE id = %s", (investigation_id,))
+    return None
+
+@router.post("/{investigation_id}/investigate", status_code=202)
+def trigger_investigation(
+    investigation_id: str,
+    background_tasks: BackgroundTasks,
+    db: Database = Depends(get_db),
+    investigator=Depends(get_ai_investigator),
+    receiver=Depends(get_alert_receiver),
+):
+    """(Re-)run the AI Investigator on this investigation's triggering alert.
+
+    Runs in the background — poll GET /investigations/{id} or its
+    /analysis endpoint for the result.
+    """
+    inv = db.fetchone(
+        "SELECT id, alert_id, status FROM investigations WHERE id = %s",
+        (investigation_id,),
+    )
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    if inv["status"] == "IN_PROGRESS":
+        raise HTTPException(status_code=409, detail="Investigation is already running")
+    if investigator is None:
+        raise HTTPException(status_code=503, detail="AI Investigator is not configured")
+    if not inv["alert_id"]:
+        raise HTTPException(status_code=400, detail="Investigation has no linked alert")
+    if receiver is None:
+        raise HTTPException(status_code=503, detail="Wazuh Indexer is not configured")
+
+    alert = receiver.get_alert_by_id(inv["alert_id"])
+    if alert is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Alert {inv['alert_id']} not found in Wazuh Indexer",
+        )
+
+    background_tasks.add_task(investigator.investigate, investigation_id, alert)
+    return {"status": "started", "investigation_id": investigation_id}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Routes - Evidence
 # ─────────────────────────────────────────────────────────────────────────────
@@ -178,17 +238,18 @@ def add_analysis(
     analysis_id = new_id()
     
     query = """
-        INSERT INTO investigation_analysis 
-        (id, investigation_id, analysis_type, content, confidence, model_id, created_by, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+        INSERT INTO investigation_analysis
+        (id, investigation_id, analysis_type, verdict, content, confidence, model_id, created_by, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
     """
     params = (
-        analysis_id, 
-        investigation_id, 
-        analysis.analysis_type, 
-        analysis.content, 
-        analysis.confidence, 
-        analysis.model_id, 
+        analysis_id,
+        investigation_id,
+        analysis.analysis_type,
+        analysis.verdict,
+        analysis.content,
+        analysis.confidence,
+        analysis.model_id,
         analysis.created_by
     )
     db.execute(query, params)
@@ -216,15 +277,16 @@ def add_action(
     action_id = new_id()
     
     query = """
-        INSERT INTO investigation_actions 
-        (id, investigation_id, action_type, description, status, performed_by, created_at)
-        VALUES (%s, %s, %s, %s, 'pending', %s, NOW())
+        INSERT INTO investigation_actions
+        (id, investigation_id, action_type, description, reasoning, status, performed_by, created_at)
+        VALUES (%s, %s, %s, %s, %s, 'pending', %s, NOW())
     """
     params = (
-        action_id, 
-        investigation_id, 
-        action.action_type, 
-        action.description, 
+        action_id,
+        investigation_id,
+        action.action_type,
+        action.description,
+        action.reasoning,
         action.performed_by
     )
     db.execute(query, params)

@@ -30,7 +30,8 @@ export const useInvestigationsStore = defineStore('investigations', {
       return {
         total: inv.length,
         queued: inv.filter(i => i.status === 'QUEUED').length,
-        investigating: inv.filter(i => i.status === 'INVESTIGATING').length,
+        investigating: inv.filter(i => i.status === 'IN_PROGRESS').length,
+        completed: inv.filter(i => i.status === 'COMPLETED').length,
         closed: inv.filter(i => i.status === 'CLOSED').length,
         critical: inv.filter(i => i.severity === 'critical').length,
         high: inv.filter(i => i.severity === 'high').length,
@@ -121,6 +122,54 @@ export const useInvestigationsStore = defineStore('investigations', {
           this.fetchActions(id),
         ])
       }
+    },
+
+    // Starts the AI Investigator on this investigation, then polls the
+    // detail endpoints until it leaves IN_PROGRESS (or we give up).
+    async startInvestigation(id) {
+      this.error = null
+      await investigationsApi.investigate(id)
+      if (this.currentInvestigation?.id === id) {
+        this.currentInvestigation = { ...this.currentInvestigation, status: 'IN_PROGRESS' }
+      }
+      this._pollInvestigation(id)
+    },
+
+    async deleteInvestigation(id) {
+      this.error = null
+      try {
+        await investigationsApi.delete(id)
+        this.investigations = this.investigations.filter(i => i.id !== id)
+        if (this.currentInvestigation?.id === id) {
+          this.currentInvestigation = null
+        }
+      } catch (err) {
+        this.error = err.message
+        throw err
+      }
+    },
+
+    async _pollInvestigation(id, attempt = 0) {
+      const MAX_ATTEMPTS = 40 // ~3-4 minutes at growing intervals
+      if (attempt >= MAX_ATTEMPTS) {
+        // There is no cancel endpoint — the backend keeps running this
+        // investigation regardless of whether anything is polling it.
+        // Giving up here only stops the *page* auto-refreshing; it does
+        // NOT stop or cancel the investigation itself. Say that
+        // explicitly instead of leaving the wording ambiguous about
+        // which of the two actually stopped.
+        if (this.currentInvestigation?.id === id && this.currentInvestigation?.status === 'IN_PROGRESS') {
+          this.error = 'This page stopped auto-refreshing, but the investigation is likely still running on the server (there is no way to cancel it). Refresh the page to check its current status — that will not restart it.'
+        }
+        return
+      }
+      const delay = Math.min(3000 + attempt * 500, 10000)
+      setTimeout(async () => {
+        await this.fetchInvestigationDetail(id)
+        if (this.currentInvestigation?.id === id && this.currentInvestigation?.status === 'IN_PROGRESS') {
+          this._pollInvestigation(id, attempt + 1)
+        }
+      }, delay)
     },
 
     setFilter(key, value) {
