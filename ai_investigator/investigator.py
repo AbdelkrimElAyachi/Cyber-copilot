@@ -28,7 +28,7 @@ from typing import Any, Optional
 
 from database import Database, new_id
 from alert_receiver import AlertReceiver
-from ai_investigator.llm.base import LLMProvider, LLMResponse
+from ai_investigator.llm.base import LLMProvider, LLMResponse, ToolChoiceViolationError
 from ai_investigator.tools.base import Tool
 
 logger = logging.getLogger("ai_investigator")
@@ -62,22 +62,50 @@ FALSE POSITIVE, or REQUIRES FURTHER INVESTIGATION.
 
 ## Investigation Process
 
-1. Carefully analyse the triggering alert provided to you.
-2. Use your tools to gather additional context:
-   - Search for related alerts from the same agent, IP, or rule.
-   - Look up the asset involved (hostname, IP, agent ID).
-   - Check for existing investigations that may be related.
-   - Examine evidence and analysis from related investigations.
+1. Carefully analyse the triggering alert AND the baseline context already
+   provided below it (the asset record and recent alert history for this
+   same agent are fetched for you up front — read them before calling any
+   tool, they usually answer "is this normal for this host?" by themselves).
+2. Only call tools for what the baseline context doesn't already answer:
+   - A different agent, IP, rule, or time range than what's already shown.
+   - Related or past investigations that might explain the pattern.
+   - Full detail on a specific alert the summary above truncated.
 3. Correlate all evidence to form your assessment.
 4. Provide your final verdict.
 
+## Efficiency — this matters as much as accuracy
+
+- Most alerts should reach a verdict in 2-4 tool calls, using the baseline
+  context already given. Reserve more than that for genuinely ambiguous cases.
+- Never repeat a search with near-identical arguments hoping for a different
+  answer (e.g. the same query reworded, or the same rule_id looked up twice).
+  The platform detects and blocks exact duplicate calls — reusing one wastes
+  a step for nothing. If a search came back thin, either broaden it in a way
+  that would actually change the result (different agent/IP/rule/time range)
+  or conclude from what you have.
+- If a step needs more than one independent lookup (e.g. the asset record
+  AND a related-investigations search), call both tools in that same turn
+  instead of one per turn.
+- A single, low-severity alert with no corroborating signal and an obvious
+  benign explanation does not need five searches to confirm it's benign.
+
+## Known benign patterns (verify briefly, don't over-investigate)
+
+- Wazuh agent ID `000` is the Wazuh manager/server itself, not a monitored
+  endpoint — alerts from it often reflect the platform's own operation.
+- Creation of system groups/users named `wazuh-*` (e.g. `wazuh-dashboard`,
+  `wazuh-indexer`) is routine self-provisioning by the Wazuh stack during
+  install/upgrade, not an attacker creating accounts — unless it recurs
+  unexpectedly long after initial setup, or is paired with other suspicious
+  activity (new SSH keys, sudoers changes, unfamiliar binaries).
+- Listening-port-changed (netstat) alerts are frequently just a service
+  restarting; only escalate if the new port/process is unfamiliar.
+
 ## Guidelines
 
-- Be thorough but efficient. Only call tools when you need more information.
-- Think step-by-step. Explain your reasoning.
 - Do NOT fabricate information. Only use data from your tools.
 - If the data is insufficient, say so honestly.
-- Each tool call should have a clear purpose.
+- Each tool call should have a clear purpose distinct from prior calls.
 
 ## Final Verdict Format
 
@@ -199,7 +227,22 @@ class AIInvestigator:
                 notes="Triggering alert.",
             )
 
-            result = self._run_loop(investigation_id, alert_data)
+            # Pre-fetch the context the LLM almost always ends up asking for
+            # anyway (the asset record, recent history for the same agent)
+            # in one local pass instead of making it spend tool-call steps
+            # (and LLM round-trips) discovering it. Faster, and cheaper on
+            # rate-limited providers since it's fewer chat completions.
+            baseline = self._gather_baseline_context(alert_data)
+            if baseline:
+                self._store_evidence(
+                    investigation_id,
+                    source_type="baseline_context",
+                    source_id=None,
+                    data=baseline,
+                    notes="Auto-collected before investigation started (asset + recent history for this agent).",
+                )
+
+            result = self._run_loop(investigation_id, alert_data, baseline)
 
             # Store the final analysis.
             self._store_analysis(
@@ -260,14 +303,67 @@ class AIInvestigator:
 
             return {"verdict": "ERROR", "error": str(e)}
 
+    # ── Baseline context (pre-fetched, not an LLM tool call) ─────────
+
+    def _gather_baseline_context(self, alert_data: dict[str, Any]) -> dict[str, Any]:
+        """Fetch the context almost every investigation ends up asking for
+        anyway — the asset record and recent alert history for the same
+        agent — using the already-registered tools directly (no LLM call).
+
+        Best-effort: any failure here just means a smaller baseline, never
+        aborts the investigation.
+        """
+        baseline: dict[str, Any] = {}
+        agent_id = (alert_data.get("agent") or {}).get("id")
+        if not agent_id:
+            return baseline
+
+        asset_tool = self._tools.get("search_assets")
+        if asset_tool is not None:
+            try:
+                asset_result = asset_tool.execute(wazuh_agent_id=agent_id)
+                assets = asset_result.get("assets") if isinstance(asset_result, dict) else None
+                if assets:
+                    baseline["asset"] = assets[0]
+            except Exception as e:
+                logger.warning("Baseline context — asset lookup failed: %s", e)
+
+        alerts_tool = self._tools.get("search_alerts")
+        if alerts_tool is not None:
+            try:
+                current_id = alert_data.get("id")
+                recent = alerts_tool.execute(agent_id=agent_id, limit=10)
+                recent_alerts = recent.get("alerts") if isinstance(recent, dict) else None
+                if recent_alerts:
+                    # Drop the triggering alert itself — it's already shown
+                    # in full above this.
+                    recent_alerts = [a for a in recent_alerts if a.get("id") != current_id]
+                if recent_alerts:
+                    baseline["recent_alerts_same_agent"] = recent_alerts[:9]
+            except Exception as e:
+                logger.warning("Baseline context — recent alerts lookup failed: %s", e)
+
+        return baseline
+
     # ── Agentic loop ────────────────────────────────────────────────
 
     def _run_loop(
         self,
         investigation_id: str,
         alert_data: dict[str, Any],
+        baseline: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """The core tool-calling loop."""
+
+        baseline_block = ""
+        if baseline:
+            baseline_block = (
+                "\n\nBaseline context (already collected for you — an asset "
+                "record and recent alert history for this same agent, if "
+                "any exist; don't re-fetch these unless you need a "
+                "different agent/IP/rule/time range):\n\n"
+                f"```json\n{_bounded_json(baseline, limit=4000)}\n```"
+            )
 
         # Build initial messages.
         messages: list[dict[str, Any]] = [
@@ -276,12 +372,20 @@ class AIInvestigator:
                 "role": "user",
                 "content": (
                     "Investigate this security alert:\n\n"
-                    f"```json\n{json.dumps(alert_data, indent=2, default=str)}\n```\n\n"
-                    "Use your tools to gather additional context, then provide "
-                    "your verdict."
+                    f"```json\n{json.dumps(alert_data, indent=2, default=str)}\n```"
+                    f"{baseline_block}\n\n"
+                    "Use your tools to gather any additional context not "
+                    "already covered above, then provide your verdict."
                 ),
             },
         ]
+
+        # Tracks (tool_name, sorted-args) signatures already called this
+        # investigation, so an exact repeat can be short-circuited instead
+        # of hitting Wazuh/MySQL again and burning another step for no new
+        # information — the exact pattern of a model re-querying the same
+        # thing with slightly reworded arguments.
+        seen_calls: dict[tuple[str, str], Any] = {}
 
         # Tool schemas for the LLM.
         tool_schemas = [tool.schema() for tool in self._tools.values()]
@@ -336,7 +440,8 @@ class AIInvestigator:
 
             for tc in response.tool_calls:
                 tool_result = self._execute_tool(
-                    investigation_id, tc.name, tc.arguments, reasoning=reasoning
+                    investigation_id, tc.name, tc.arguments, reasoning=reasoning,
+                    seen_calls=seen_calls,
                 )
 
                 # Add tool result to conversation (bounded — see
@@ -354,7 +459,7 @@ class AIInvestigator:
                     "oversized request",
                     investigation_id, _conversation_size(messages),
                 )
-                return self._force_final_verdict(investigation_id, messages)
+                return self._force_final_verdict(investigation_id, messages, tool_schemas)
 
         # Hit max steps — ask for a final answer without tools.
         logger.warning(
@@ -368,6 +473,7 @@ class AIInvestigator:
         self,
         investigation_id: str,
         messages: list[dict[str, Any]],
+        tool_schemas: Optional[list[dict]] = None,
     ) -> dict[str, Any]:
         """Ask the LLM for a final verdict, no more tool calls allowed."""
         messages.append({
@@ -378,7 +484,47 @@ class AIInvestigator:
                 "your final verdict now."
             ),
         })
-        response = self._llm.chat(messages, tools=None)
+        # Still pass the tool schemas alongside tool_choice="none" (rather
+        # than omitting tools altogether) — some providers (Groq's gpt-oss
+        # models) are more likely to actually honour "don't call a tool"
+        # when they can see what tool_choice="none" is refusing, versus
+        # being asked to refuse tools they were never shown for this call.
+        try:
+            response = self._llm.chat(messages, tools=tool_schemas, tool_choice="none")
+        except ToolChoiceViolationError as e:
+            # It tried to call a tool anyway and the provider rejected the
+            # whole response instead of degrading to plain text. Rather
+            # than failing the investigation outright over what's really
+            # just "it ran out of budget while still wanting to dig
+            # further", record that honestly as a NEEDS_REVIEW verdict.
+            logger.warning(
+                "Investigation %s — model attempted a tool call (%s) after "
+                "being told not to; provider rejected it (%s). Falling "
+                "back to a NEEDS_REVIEW verdict instead of failing.",
+                investigation_id, e.attempted_tool_call, e,
+            )
+            attempted_note = ""
+            if e.attempted_tool_call:
+                attempted_note = (
+                    f" It was still trying to call `{e.attempted_tool_call.get('name', 'a tool')}` "
+                    f"with arguments {json.dumps(e.attempted_tool_call.get('arguments', {}), default=str)} "
+                    "when it ran out of investigation budget."
+                )
+            return {
+                "verdict": "NEEDS_REVIEW",
+                "confidence": 0.0,
+                "summary": (
+                    "The investigation reached its step/context limit while "
+                    "the AI was still trying to gather more information, and "
+                    "it could not be forced to produce a plain-text final "
+                    "answer instead."
+                ),
+                "details": (
+                    "Automated fallback verdict — the model kept attempting "
+                    "tool calls even after being told to stop and answer "
+                    "with what it had so far." + attempted_note
+                ),
+            }
         final_text = response.content or ""
         if not final_text.strip():
             raise RuntimeError(
@@ -396,8 +542,16 @@ class AIInvestigator:
         tool_name: str,
         arguments: dict[str, Any],
         reasoning: Optional[str] = None,
+        seen_calls: Optional[dict[tuple[str, str], Any]] = None,
     ) -> Any:
-        """Execute a tool and record the action."""
+        """Execute a tool and record the action.
+
+        If ``seen_calls`` is given and this exact (tool, arguments) pair was
+        already called earlier in the same investigation, skip re-querying
+        Wazuh/MySQL and hand back the cached result with a note — this is
+        the deterministic backstop for a model that repeats a search with
+        slightly reworded arguments instead of concluding.
+        """
         tool = self._tools.get(tool_name)
         if tool is None:
             error_msg = f"Unknown tool: {tool_name}"
@@ -409,6 +563,24 @@ class AIInvestigator:
                 status="failed", result=error_msg,
             )
             return {"error": error_msg}
+
+        signature = (tool_name, json.dumps(arguments, sort_keys=True, default=str))
+        if seen_calls is not None and signature in seen_calls:
+            logger.info("  → %s(%s) is a duplicate of an earlier call this investigation — reusing result", tool_name, arguments)
+            note = (
+                "You already called this exact tool with these exact arguments "
+                "earlier in this investigation — no new information here. "
+                "Reusing the previous result below. Try a genuinely different "
+                "tool or parameters, or provide your final verdict."
+            )
+            cached = seen_calls[signature]
+            self._record_action(
+                investigation_id, tool_name,
+                description=json.dumps(arguments),
+                reasoning=reasoning,
+                status="completed", result=f"[duplicate call — cached] {note}",
+            )
+            return {"note": note, "cached_result": cached}
 
         logger.info("  → calling %s(%s)", tool_name, arguments)
 
@@ -425,6 +597,8 @@ class AIInvestigator:
                 reasoning=reasoning,
                 status="completed", result=result_summary,
             )
+            if seen_calls is not None:
+                seen_calls[signature] = result
             return result
 
         except Exception as e:

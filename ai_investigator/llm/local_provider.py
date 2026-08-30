@@ -18,6 +18,7 @@ class LocalProvider(APIProvider):
         model: str = "llama3",
         temperature: float = 0.1,
         max_tokens: int | None = 4096,
+        reasoning_effort: str | None = None,
     ) -> None:
         super().__init__(
             base_url=base_url,
@@ -25,4 +26,5 @@ class LocalProvider(APIProvider):
             api_key=None,
             temperature=temperature,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
         )

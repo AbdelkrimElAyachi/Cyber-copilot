@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 import requests
 
-from .base import LLMProvider, LLMResponse, ToolCall
+from .base import LLMProvider, LLMResponse, ToolCall, ToolChoiceViolationError
 
 logger = logging.getLogger("ai_investigator.llm")
 
@@ -26,7 +26,7 @@ BASE_BACKOFF_SECONDS = 2.0
 # that (we've seen Retry-After: 1770, i.e. ~30 minutes) is indistinguishable
 # from a hang. Cap how long we'll actually wait; past this, fail fast with
 # a clear message instead of blocking the caller.
-MAX_RETRY_WAIT_SECONDS = 30.0
+MAX_RETRY_WAIT_SECONDS = 60.0
 
 
 class APIProvider(LLMProvider):
@@ -43,6 +43,7 @@ class APIProvider(LLMProvider):
         api_key: Optional[str] = None,
         temperature: float = 0.1,
         max_tokens: Optional[int] = 4096,
+        reasoning_effort: Optional[str] = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
@@ -55,6 +56,13 @@ class APIProvider(LLMProvider):
         # written — resulting in an empty final answer. Setting this
         # explicitly gives the model enough room to reason AND answer.
         self._max_tokens = max_tokens
+        # Groq's gpt-oss models (and OpenAI's o-series) accept this to cap
+        # how many tokens they spend on internal chain-of-thought before
+        # writing "content". Lower effort = fewer tokens per call = faster
+        # responses and less pressure on tokens-per-minute quotas, at some
+        # cost to reasoning depth. Ignored by providers that don't support
+        # it, so it's only sent when explicitly configured.
+        self._reasoning_effort = reasoning_effort
 
     @property
     def model(self) -> str:
@@ -65,6 +73,7 @@ class APIProvider(LLMProvider):
         self,
         messages: list[dict[str, Any]],
         tools: Optional[list[dict]] = None,
+        tool_choice: Optional[str] = None,
     ) -> LLMResponse:
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._api_key:
@@ -77,9 +86,18 @@ class APIProvider(LLMProvider):
         }
         if self._max_tokens:
             payload["max_tokens"] = self._max_tokens
+        if self._reasoning_effort:
+            payload["reasoning_effort"] = self._reasoning_effort
         if tools:
             payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+            payload["tool_choice"] = tool_choice or "auto"
+        elif tool_choice:
+            # Forcing "none" with no tools declared at all is what
+            # actually triggers some providers (Groq's gpt-oss models) to
+            # ignore the constraint and attempt a tool call anyway, which
+            # they then reject outright. Send it explicitly even without a
+            # tools list so the intent is unambiguous.
+            payload["tool_choice"] = tool_choice
 
         url = f"{self._base_url}/chat/completions"
         logger.debug("POST %s model=%s", url, self._model)
@@ -126,6 +144,10 @@ class APIProvider(LLMProvider):
             resp = requests.post(url, json=payload, headers=headers, timeout=120)
             if resp.status_code not in (429, 500, 502, 503, 504):
                 if not resp.ok:
+                    if resp.status_code == 400:
+                        violation = self._detect_tool_choice_violation(resp)
+                        if violation is not None:
+                            raise violation
                     raise requests.exceptions.HTTPError(
                         f"{resp.status_code} Client Error for url: {url} | "
                         f"response body: {resp.text[:1000]}",
@@ -172,3 +194,29 @@ class APIProvider(LLMProvider):
 
         assert last_error is not None
         raise last_error
+
+    @staticmethod
+    def _detect_tool_choice_violation(
+        resp: "requests.Response",
+    ) -> Optional[ToolChoiceViolationError]:
+        """Recognise Groq's ``tool_use_failed`` / "Tool choice is none, but
+        model called a tool" error body and turn it into a distinguishable
+        exception the caller can recover from, instead of a generic 400."""
+        try:
+            body = resp.json()
+        except ValueError:
+            return None
+        err = body.get("error") if isinstance(body, dict) else None
+        if not isinstance(err, dict) or err.get("code") != "tool_use_failed":
+            return None
+        message = err.get("message") or "Tool choice is none, but model called a tool"
+        if "tool choice is none" not in message.lower():
+            return None
+        attempted: Optional[dict] = None
+        raw = err.get("failed_generation")
+        if raw:
+            try:
+                attempted = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                attempted = {"raw": raw}
+        return ToolChoiceViolationError(message, attempted_tool_call=attempted)

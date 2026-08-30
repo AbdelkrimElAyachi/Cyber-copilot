@@ -45,6 +45,11 @@ _LLM_MODEL = os.getenv("LLM_MODEL")
 _LLM_API_KEY = os.getenv("LLM_API_KEY") or None
 _LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 _LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+# Optional: "low"/"medium"/"high" — supported by Groq's gpt-oss models and
+# OpenAI's o-series. Lower = fewer hidden chain-of-thought tokens per call
+# (faster, cheaper, less likely to trip a tokens-per-minute quota). Left
+# unset by default since not every model/provider supports it.
+_LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT") or None
 
 
 # ── Service Instances ───────────────────────────────────────────────────
@@ -141,6 +146,8 @@ def startup() -> None:
         from ai_investigator.investigator import AIInvestigator
 
         llm_kwargs: dict = {"temperature": _LLM_TEMPERATURE, "max_tokens": _LLM_MAX_TOKENS}
+        if _LLM_REASONING_EFFORT:
+            llm_kwargs["reasoning_effort"] = _LLM_REASONING_EFFORT
         if _LLM_BASE_URL:
             llm_kwargs["base_url"] = _LLM_BASE_URL
         if _LLM_MODEL:

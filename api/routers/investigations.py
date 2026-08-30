@@ -129,10 +129,22 @@ def delete_investigation(investigation_id: str, db: Database = Depends(get_db)):
     """Delete an investigation and everything filed under it.
 
     There's no ON DELETE CASCADE on these tables, so child rows
-    (evidence/analysis/actions) are removed first, then the
+    (evidence/actions/analysis) are removed first, then the
     investigation itself.
     """
-    _ensure_investigation_exists(db, investigation_id)
+    row = db.fetchone("SELECT status FROM investigations WHERE id = %s", (investigation_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    if row["status"] == "IN_PROGRESS":
+        # The AI Investigator is still writing to this investigation's
+        # evidence/actions/analysis in the background — deleting it out
+        # from under that job causes its next write to fail with a
+        # foreign-key error instead of a clean result. Wait for it to
+        # finish (or fail on its own) first.
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete an investigation while it's still being investigated",
+        )
     db.execute("DELETE FROM investigation_evidence WHERE investigation_id = %s", (investigation_id,))
     db.execute("DELETE FROM investigation_analysis WHERE investigation_id = %s", (investigation_id,))
     db.execute("DELETE FROM investigation_actions WHERE investigation_id = %s", (investigation_id,))

@@ -41,6 +41,22 @@ class LLMResponse:
         return (self.content or self.reasoning or "").strip()
 
 
+class ToolChoiceViolationError(Exception):
+    """Raised when we explicitly told the provider not to call any tool
+    (``tool_choice="none"``) but the model attempted one anyway, and the
+    provider rejected the whole response instead of degrading it to plain
+    text. Observed on Groq's gpt-oss models when forcing a final,
+    no-more-tools answer at the end of an investigation.
+    """
+
+    def __init__(self, message: str, attempted_tool_call: Optional[dict] = None) -> None:
+        super().__init__(message)
+        # The tool call the model tried to make, if the provider's error
+        # body included it (e.g. Groq's "failed_generation" field) —
+        # useful to show what it still wanted to check.
+        self.attempted_tool_call = attempted_tool_call
+
+
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
@@ -49,6 +65,13 @@ class LLMProvider(ABC):
         self,
         messages: list[dict[str, Any]],
         tools: Optional[list[dict]] = None,
+        tool_choice: Optional[str] = None,
     ) -> LLMResponse:
-        """Send messages with optional tool definitions and return a response."""
+        """Send messages with optional tool definitions and return a response.
+
+        ``tool_choice``: e.g. ``"none"`` to explicitly forbid tool calls for
+        this turn (still pass ``tools`` alongside it — telling the model
+        what it can't use right now, rather than pretending nothing exists,
+        is what actually gets some providers to comply).
+        """
         ...

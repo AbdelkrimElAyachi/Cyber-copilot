@@ -54,6 +54,8 @@ async function deleteInvestigation(inv) {
   deletingId.value = inv.id
   try {
     await store.deleteInvestigation(inv.id)
+  } catch (err) {
+    alert(err.message || 'Failed to delete investigation.')
   } finally {
     deletingId.value = null
   }
