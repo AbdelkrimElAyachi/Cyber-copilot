@@ -41,7 +41,13 @@ MAX_STEPS = 10
 # time), so an unbounded tool result compounds across steps and can blow
 # past the API's request-size limit (413). Cap what actually goes into
 # the conversation the LLM sees.
-MAX_TOOL_RESULT_CHARS = 1500
+#
+# Kept conservative on purpose: the system prompt + tool schemas alone
+# already cost ~1700 tokens on every single request (fixed, unavoidable
+# overhead), and small free-tier models can have a tokens-per-minute
+# budget as low as 8000 for the *entire* request (prompt + reserved
+# completion) — there's very little room left for conversation content.
+MAX_TOOL_RESULT_CHARS = 800
 
 # Hard cap on the total size (JSON-serialised, in characters) of the
 # conversation sent to the LLM. Per-message truncation alone isn't
@@ -50,62 +56,42 @@ MAX_TOOL_RESULT_CHARS = 1500
 # running total would cross this, the loop stops calling tools early and
 # asks for a final verdict with whatever context was gathered so far,
 # instead of letting the next request blow past the API's size limit.
-MAX_CONVERSATION_CHARS = 20_000
+MAX_CONVERSATION_CHARS = 8_000
 
 # ── System prompt ───────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
 You are an expert AI security analyst working on a Security Investigation Platform.
 
-Your task: investigate a security alert and determine whether it is a TRUE POSITIVE, \
-FALSE POSITIVE, or REQUIRES FURTHER INVESTIGATION.
+Task: investigate a security alert and determine TRUE POSITIVE, FALSE POSITIVE, \
+or NEEDS REVIEW.
 
-## Investigation Process
+## Process
 
-1. Carefully analyse the triggering alert AND the baseline context already
-   provided below it (the asset record and recent alert history for this
-   same agent are fetched for you up front — read them before calling any
-   tool, they usually answer "is this normal for this host?" by themselves).
-2. Only call tools for what the baseline context doesn't already answer:
-   - A different agent, IP, rule, or time range than what's already shown.
-   - Related or past investigations that might explain the pattern.
-   - Full detail on a specific alert the summary above truncated.
-3. Correlate all evidence to form your assessment.
-4. Provide your final verdict.
+1. Read the triggering alert AND the baseline context below it (asset record +
+   recent alert history for the same agent, already fetched for you — usually
+   answers "is this normal for this host?" on its own; don't re-fetch it).
+2. Only call tools for what's still missing: a different agent/IP/rule/time
+   range, related past investigations, or full detail on a truncated alert.
+3. Correlate the evidence, then give your verdict.
 
-## Efficiency — this matters as much as accuracy
+## Be efficient — budget matters as much as accuracy
 
-- Most alerts should reach a verdict in 2-4 tool calls, using the baseline
-  context already given. Reserve more than that for genuinely ambiguous cases.
-- Never repeat a search with near-identical arguments hoping for a different
-  answer (e.g. the same query reworded, or the same rule_id looked up twice).
-  The platform detects and blocks exact duplicate calls — reusing one wastes
-  a step for nothing. If a search came back thin, either broaden it in a way
-  that would actually change the result (different agent/IP/rule/time range)
-  or conclude from what you have.
-- If a step needs more than one independent lookup (e.g. the asset record
-  AND a related-investigations search), call both tools in that same turn
-  instead of one per turn.
-- A single, low-severity alert with no corroborating signal and an obvious
-  benign explanation does not need five searches to confirm it's benign.
-
-## Known benign patterns (verify briefly, don't over-investigate)
-
-- Wazuh agent ID `000` is the Wazuh manager/server itself, not a monitored
-  endpoint — alerts from it often reflect the platform's own operation.
-- Creation of system groups/users named `wazuh-*` (e.g. `wazuh-dashboard`,
-  `wazuh-indexer`) is routine self-provisioning by the Wazuh stack during
-  install/upgrade, not an attacker creating accounts — unless it recurs
-  unexpectedly long after initial setup, or is paired with other suspicious
-  activity (new SSH keys, sudoers changes, unfamiliar binaries).
-- Listening-port-changed (netstat) alerts are frequently just a service
-  restarting; only escalate if the new port/process is unfamiliar.
+- Reach a verdict in 2-4 tool calls for most alerts; more only if genuinely
+  ambiguous. Duplicate calls (same tool + same arguments) are blocked by the
+  platform and waste a step — broaden meaningfully or conclude instead.
+- Batch independent lookups into the same turn rather than one per turn.
+- Agent `000` is the Wazuh manager itself, not a monitored endpoint.
+  `wazuh-*` group/user creation is routine self-provisioning by the Wazuh
+  stack, not attacker activity, unless paired with other suspicious signals.
+  Netstat/listening-port changes are usually just a service restart.
+- Don't fabricate data or run extra searches just to confirm an already-clear
+  benign pattern.
 
 ## Guidelines
 
-- Do NOT fabricate information. Only use data from your tools.
-- If the data is insufficient, say so honestly.
-- Each tool call should have a clear purpose distinct from prior calls.
+- Only use data from your tools; say so if it's insufficient.
+- Each tool call must have a purpose distinct from prior calls.
 
 ## Final Verdict Format
 
@@ -332,14 +318,18 @@ class AIInvestigator:
         if alerts_tool is not None:
             try:
                 current_id = alert_data.get("id")
-                recent = alerts_tool.execute(agent_id=agent_id, limit=10)
+                recent = alerts_tool.execute(agent_id=agent_id, limit=5)
                 recent_alerts = recent.get("alerts") if isinstance(recent, dict) else None
                 if recent_alerts:
                     # Drop the triggering alert itself — it's already shown
                     # in full above this.
                     recent_alerts = [a for a in recent_alerts if a.get("id") != current_id]
                 if recent_alerts:
-                    baseline["recent_alerts_same_agent"] = recent_alerts[:9]
+                    # Kept small — this gets embedded in every request's
+                    # first message, and small free-tier models can have a
+                    # tokens-per-minute budget too tight to carry much
+                    # fixed overhead (see MAX_CONVERSATION_CHARS above).
+                    baseline["recent_alerts_same_agent"] = recent_alerts[:4]
             except Exception as e:
                 logger.warning("Baseline context — recent alerts lookup failed: %s", e)
 
@@ -362,7 +352,7 @@ class AIInvestigator:
                 "record and recent alert history for this same agent, if "
                 "any exist; don't re-fetch these unless you need a "
                 "different agent/IP/rule/time range):\n\n"
-                f"```json\n{_bounded_json(baseline, limit=4000)}\n```"
+                f"```json\n{_bounded_json(baseline, limit=1200)}\n```"
             )
 
         # Build initial messages.
