@@ -72,6 +72,7 @@ investigation_manager = InvestigationManager(db, policy_engine)
 # investigations stay QUEUED until manually run.
 alert_receiver = None  # type: ignore[assignment]
 ai_investigator = None  # type: ignore[assignment]
+chatbot = None  # type: ignore[assignment]
 poller_service: PollerService = None  # type: ignore[assignment]
 
 
@@ -107,11 +108,16 @@ def get_ai_investigator():
     return ai_investigator
 
 
+def get_chatbot():
+    """Return the shared SecurityChatbot instance, or None if unavailable."""
+    return chatbot
+
+
 # ── Lifecycle Hooks ─────────────────────────────────────────────────────
 
 def startup() -> None:
     """Initialize database, seed defaults, and set up the poller."""
-    global poller_service, alert_receiver, ai_investigator
+    global poller_service, alert_receiver, ai_investigator, chatbot
 
     db.connect()
     db.init_tables()
@@ -161,8 +167,18 @@ def startup() -> None:
             "AI Investigator ready (provider=%s, model=%s)",
             _LLM_PROVIDER, llm_kwargs.get("model", "<default>"),
         )
+
+        # Chat assistant shares the same LLM connection and tool access as
+        # the investigator (read-only alerts/investigations/assets — see
+        # ai_investigator.tools.build_default_tools for why the users
+        # table is unreachable by either of them).
+        from ai_investigator.chatbot import SecurityChatbot
+
+        chatbot = SecurityChatbot(llm=llm, db=db, alert_receiver=receiver)
+        logger.info("Chat assistant ready (provider=%s, model=%s)",
+                    _LLM_PROVIDER, llm_kwargs.get("model", "<default>"))
     except Exception as e:
-        logger.warning("AI Investigator disabled: %s", e)
+        logger.warning("AI Investigator / chat assistant disabled: %s", e)
     ai_investigator = investigator
 
     poller_service = PollerService(

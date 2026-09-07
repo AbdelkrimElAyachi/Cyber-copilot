@@ -87,6 +87,9 @@ or NEEDS REVIEW.
   Netstat/listening-port changes are usually just a service restart.
 - Don't fabricate data or run extra searches just to confirm an already-clear
   benign pattern.
+- If a source/destination IP looks external and relevant to the verdict, check
+  it with `check_ip_reputation` once — skip it for private/internal IPs
+  (10.x, 192.168.x, etc.) or IPs already covered by the baseline context.
 
 ## Guidelines
 
@@ -148,36 +151,14 @@ class AIInvestigator:
     # ── Tool registration ───────────────────────────────────────────
 
     def _register_tools(self) -> None:
-        """Register all available tools."""
-        from ai_investigator.tools.wazuh_tools import (
-            SearchAlertsTool,
-            GetAlertDetailsTool,
-        )
-        from ai_investigator.tools.database_tools import (
-            SearchInvestigationsTool,
-            GetInvestigationTool,
-            GetInvestigationEvidenceTool,
-            GetInvestigationAnalysisTool,
-            SearchAssetsTool,
-            GetAssetTool,
-        )
+        """Register all available tools.
 
-        # Wazuh tools (only if receiver is available).
-        if self._receiver is not None:
-            self._add_tool(SearchAlertsTool(self._receiver))
-            self._add_tool(GetAlertDetailsTool(self._receiver))
+        Shared with the chat assistant via ``build_default_tools`` — see
+        there for why the ``users`` table is deliberately unreachable.
+        """
+        from ai_investigator.tools import build_default_tools
 
-        # Database tools.
-        self._add_tool(SearchInvestigationsTool(self._db))
-        self._add_tool(GetInvestigationTool(self._db))
-        self._add_tool(GetInvestigationEvidenceTool(self._db))
-        self._add_tool(GetInvestigationAnalysisTool(self._db))
-        self._add_tool(SearchAssetsTool(self._db))
-        self._add_tool(GetAssetTool(self._db))
-
-    def _add_tool(self, tool: Tool) -> None:
-        """Register a single tool."""
-        self._tools[tool.name] = tool
+        self._tools = build_default_tools(self._db, self._receiver)
 
     # ── Public API ──────────────────────────────────────────────────
 

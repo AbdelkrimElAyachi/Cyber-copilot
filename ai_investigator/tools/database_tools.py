@@ -247,7 +247,8 @@ class SearchAssetsTool(Tool):
     def description(self) -> str:
         return (
             "Search assets (hosts, servers, endpoints) by hostname, "
-            "IP address, or Wazuh agent ID."
+            "IP address, or Wazuh agent ID. Call with no arguments to list "
+            "all known assets."
         )
 
     @property
@@ -286,14 +287,14 @@ class SearchAssetsTool(Tool):
                 conditions.append("wazuh_agent_id = %s")
                 params.append(kwargs["wazuh_agent_id"])
 
-            if not conditions:
-                return {"error": "At least one search parameter is required"}
-
-            where = " AND ".join(conditions)
+            # No filters = list everything, same as search_alerts and
+            # search_investigations — a bare "what assets exist?" shouldn't
+            # require the caller to already know one to search for.
+            where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
             rows = self._db.fetchall(
                 f"SELECT id, hostname, ip_address, asset_type, os, "
                 f"wazuh_agent_id, criticality, notes, created_at "
-                f"FROM assets WHERE {where} LIMIT 20",
+                f"FROM assets {where} LIMIT 20",
                 tuple(params),
             )
             return {"count": len(rows), "assets": _serialise_rows(rows)}

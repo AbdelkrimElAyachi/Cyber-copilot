@@ -20,6 +20,12 @@ const routes = [
     meta: { title: 'Investigation Detail' },
   },
   {
+    path: '/chat',
+    name: 'chat',
+    component: () => import('../views/ChatView.vue'),
+    meta: { title: 'AI Assistant' },
+  },
+  {
     path: '/policies',
     name: 'policies',
     component: () => import('../views/PoliciesView.vue'),

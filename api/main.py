@@ -20,7 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.dependencies import startup, shutdown
-from api.routers import investigations, policies, assets, users, system
+from api.routers import investigations, policies, assets, users, system, chat
 
 
 # ── Lifespan ────────────────────────────────────────────────────────────
@@ -59,6 +59,7 @@ app.include_router(policies.router)
 app.include_router(assets.router)
 app.include_router(users.router)
 app.include_router(system.router)
+app.include_router(chat.router)
 
 
 # ── Health check ────────────────────────────────────────────────────────

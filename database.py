@@ -173,6 +173,34 @@ _TABLES: list[tuple[str, str]] = [
         """,
     ),
     (
+        "chat_sessions",
+        """
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id          CHAR(36)     PRIMARY KEY,
+            title       VARCHAR(255) NOT NULL DEFAULT 'New chat',
+            created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        ON UPDATE CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "chat_messages",
+        """
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id          CHAR(36)     PRIMARY KEY,
+            session_id  CHAR(36)     NOT NULL,
+            role        VARCHAR(20)  NOT NULL,
+            content     TEXT         NOT NULL,
+            reasoning   TEXT,
+            tool_trace  JSON,
+            created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES chat_sessions(id),
+            INDEX idx_session (session_id)
+        )
+        """,
+    ),
+    (
         "poller_state",
         """
         CREATE TABLE IF NOT EXISTS poller_state (
