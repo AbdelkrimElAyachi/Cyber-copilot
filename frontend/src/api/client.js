@@ -1,3 +1,5 @@
+import { getToken, clearToken } from './token'
+
 const API_BASE = '/api'
 
 class ApiError extends Error {
@@ -11,9 +13,11 @@ class ApiError extends Error {
 
 async function request(path, options = {}) {
   const url = `${API_BASE}${path}`
+  const token = getToken()
   const config = {
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
     ...options,
@@ -33,6 +37,13 @@ async function request(path, options = {}) {
     const data = await response.json()
 
     if (!response.ok) {
+      if (response.status === 401 && path !== '/auth/login') {
+        // Token missing/expired/invalid — drop it and let the app react
+        // (router guard in main.js sends the user to /login). Not fired
+        // for a failed login attempt itself, which is a normal 401.
+        clearToken()
+        window.dispatchEvent(new CustomEvent('auth:unauthorized'))
+      }
       throw new ApiError(
         data.detail || 'Request failed',
         response.status,

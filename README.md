@@ -60,6 +60,15 @@ repeats — up to a step/size budget — until it reaches a verdict.
 | `get_investigation_analysis` | MySQL | past AI analyses on an investigation |
 | `search_assets` | MySQL | look up a host/endpoint by hostname, IP, or agent ID |
 | `get_asset` | MySQL | full detail on one asset |
+| `check_ip_reputation` | AbuseIPDB (external) | is a source/destination IP known-malicious? Abuse confidence score, report count, ISP, country |
+
+`check_ip_reputation` is a single outbound HTTP request per IP (no local
+dataset or ML model, so it stays fast and light) and is cached in-process
+for an hour so the same IP isn't looked up twice. Private/internal IPs are
+recognized locally and never sent out. It only appears in the tool list at
+all when `ABUSEIPDB_API_KEY` is set — with no key, the AI is never offered
+a tool it can't use. The same tool set (including this one) is shared with
+the [chat assistant](#chat-assistant) described below.
 
 **By design, the AI has no access to `users` or any user-identifying data**
 (no `assigned_to`, `created_by`, `performed_by` lookups) — every tool query
@@ -101,6 +110,77 @@ instance by default. Switching is one `.env` variable
   verdict and the investigation is always marked `COMPLETED`, so nothing
   is left stuck at `IN_PROGRESS` indefinitely.
 
+## Chat Assistant
+
+A free-form chat UI (`/chat` in the frontend, `ai_investigator/chatbot.py` +
+`api/routers/chat.py` on the backend) for asking the AI about alerts,
+investigations, or assets directly, outside the fixed investigate-one-alert
+flow. It shares the exact same tool set as the AI Investigator (the table
+above) via `ai_investigator/tools/build_default_tools` — including the same
+hard restriction that nothing can read the `users` table.
+
+Each turn only persists the user's message and the assistant's final
+answer; the tool-calling round trip within a turn is rebuilt from that
+history and discarded once the turn ends, so conversation size (and LLM
+request cost) stays bounded no matter how long a chat session runs.
+
+## Authentication
+
+There's no separate password database for this app. Logging in checks the
+username/password you type **against your Wazuh Indexer** — the same
+account the Wazuh Dashboard itself uses:
+
+1. `POST /auth/login` sends your credentials to the Wazuh Indexer as HTTP
+   Basic Auth on one lightweight request. `200` = valid account, `401` =
+   invalid. The password is forwarded for that single check and never
+   stored.
+2. On success, the backend issues its own short-lived signed **JWT**
+   (`AUTH_TOKEN_TTL_MINUTES`, default 12h) — the Indexer has no reusable
+   token to hand back, so the app mints one. The frontend sends it as
+   `Authorization: Bearer <token>` on every request from then on.
+3. The first successful login for a given Wazuh username auto-creates a
+   matching row in the app's own `users` table (role `analyst`). That row
+   — not anything from Wazuh — is what the app would use for per-feature
+   permissions; there's only one access tier today, so every authenticated
+   user has full access.
+
+Every route requires a valid token except `/auth/login` and `/health`.
+
+### Finding your Wazuh username/password
+
+This app doesn't create Wazuh accounts — you log in with one that already
+exists on your Wazuh Indexer. Where to find it depends on what you still
+have from the install:
+
+- **Right after a fresh install**, the Wazuh installer wrote a
+  `wazuh-install-files.tar` in whatever directory you ran
+  `wazuh-install.sh` from (often `~` or wherever you downloaded it).
+  Extract it and read the generated passwords:
+  ```bash
+  tar -xf wazuh-install-files.tar
+  cat wazuh-install-files/wazuh-passwords.txt
+  ```
+  This lists every internal account (`admin`, `kibanaserver`, `wazuh_wui`,
+  etc.) with the password Wazuh generated for it at install time. `admin`
+  is the one you want — it's the same login the Wazuh Dashboard uses.
+
+- **If that file is gone** (Wazuh's own docs recommend deleting it after
+  saving the passwords elsewhere), the passwords are stored as salted
+  hashes on the Indexer and can't be recovered — only reset. Use the
+  password tool that ships with the Indexer:
+  ```bash
+  sudo bash /usr/share/wazuh-indexer/plugins/opensearch-security/tools/wazuh-passwords-tool.sh -h
+  ```
+  to see the exact flags for your version — typically `-u <username> -p
+  <new-password>` to set a specific account's password, or `-a` to
+  regenerate random passwords for every internal account and print them.
+
+Don't confuse this with `WAZUH_INDEXER_USERNAME`/`WAZUH_INDEXER_PASSWORD`
+in `.env` — that pair is a *service* account this app's own backend uses
+to pull alerts (poller, AI Investigator, chat). It's unrelated to what a
+human types into the login screen; any valid Indexer account works there,
+including that same service account if you don't mind reusing it.
+
 ## Tech stack
 
 - **Backend**: Python, FastAPI, SQLAlchemy + PyMySQL, `opensearch-py`
@@ -120,17 +200,19 @@ logging_config.py          Console + rotating file logging (logs/app.log)
 
 ai_investigator/
   investigator.py          The agentic loop
+  chatbot.py               Free-form multi-turn chat, same tools as the investigator
   llm/                     Provider-agnostic LLM interface (api/local)
-  tools/                   Wazuh + database tools available to the AI
+  tools/                   Wazuh + database + threat-intel tools available to the AI
 
 api/
-  main.py                  FastAPI app, lifespan, routers
+  main.py                  FastAPI app, lifespan, routers, route protection
   dependencies.py          Service wiring (DB, poller, AI investigator, LLM config)
-  routers/                 investigations, policies, assets, users, system(poller)
+  auth.py                  Wazuh-credential login check + JWT issuing/verification
+  routers/                 auth, investigations, policies, assets, users, system(poller), chat
 
 frontend/
-  src/views/               Dashboard, Investigations (list/detail), Assets, Policies, Settings
-  src/stores/               Pinia store(s) — investigation state + polling
+  src/views/               Dashboard, Investigations (list/detail), Assets, Policies, Settings, Chat, Login
+  src/stores/               Pinia store(s) — investigation state + polling, auth/session
   src/api/                 Thin fetch wrapper + per-resource API modules
 ```
 
@@ -146,6 +228,7 @@ frontend/
 | `investigation_analysis` | Verdict + confidence + explanation (AI or manual) |
 | `investigation_actions` | Every tool call the AI made, with its reasoning and result |
 | `poller_state` | Poller config + watermark/stats, one row per named poller |
+| `chat_sessions` / `chat_messages` | Chat Assistant conversations and messages |
 
 Tables and migrations are created automatically on backend startup
 (`Database.init_tables()`).
@@ -201,6 +284,10 @@ runs somewhere else).
 | `LLM_API_KEY` | Required when `LLM_PROVIDER=api` |
 | `LLM_TEMPERATURE` | Default `0.1` |
 | `LLM_MAX_TOKENS` | Default `4096` — output cap; too low can truncate the model's final answer |
+| `LLM_REASONING_EFFORT` | Optional `low`/`medium`/`high` — supported by some models (Groq's gpt-oss family, OpenAI o-series); lowers hidden chain-of-thought token usage per call |
+| `ABUSEIPDB_API_KEY` | Optional. Enables the `check_ip_reputation` tool (free tier: 1000 checks/day). Get one at [abuseipdb.com/account/api](https://www.abuseipdb.com/account/api). Leave blank to disable the tool entirely |
+| `AUTH_JWT_SECRET` | Signs this app's session tokens — see [Authentication](#authentication). Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"`. Changing it logs everyone out |
+| `AUTH_TOKEN_TTL_MINUTES` | How long a login stays valid, in minutes. Default `720` (12h) |
 
 ### Starting the pipeline
 
@@ -219,19 +306,23 @@ detail page.
   the frontend's "Start Investigation" button, with live status polling
 - Evidence / analysis / actions / timeline views, verdict display
 - Delete investigation (cleans up its evidence/analysis/actions first)
+- Wazuh-credential login, session tokens, route protection (see [Authentication](#authentication))
+- Free-form chat with the AI over the same tool set (see [Chat Assistant](#chat-assistant))
 
 **Known gaps, not yet built:**
-- **No authentication** — the `users` table exists for
-  assignment/attribution, but there's no login flow or session/auth guard.
+- **No per-feature permissions** — every logged-in user has full access
+  today (see [Authentication](#authentication)); `users.role` exists but
+  nothing checks it yet.
 - **No way to cancel a running investigation** — once started, it runs to
   completion, error, or backend restart.
 - Investigation quality varies with the LLM in use — smaller/cheaper
   models can loop somewhat indecisively before converging on a verdict;
   worth tuning `SYSTEM_PROMPT` in `investigator.py` if you see this.
-- **Deliberately deferred** (per project scope): Suricata, CloudTrail,
-  threat-intel enrichment, and RAG are not integrated. The tool
-  architecture is meant to make adding them additive later — new `Tool`
-  subclasses, not a redesign.
+- **Deliberately deferred** (per project scope): Suricata, CloudTrail, and
+  RAG are not integrated. IP reputation (`check_ip_reputation`, via
+  AbuseIPDB) is the first threat-intel source; the tool architecture is
+  meant to make adding more additive later — new `Tool` subclasses, not a
+  redesign.
 
 ## Testing changes
 

@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '../../stores/auth'
 
 defineProps({
   open: Boolean,
@@ -9,6 +10,18 @@ defineProps({
 defineEmits(['close'])
 
 const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
+
+const initials = computed(() => {
+  const name = auth.user?.full_name || auth.user?.username || '?'
+  return name.slice(0, 2).toUpperCase()
+})
+
+function onLogout() {
+  auth.logout()
+  router.push({ name: 'login' })
+}
 
 const navItems = [
   {
@@ -87,11 +100,20 @@ const isActive = (path) => {
     <!-- Footer -->
     <div class="px-5 py-4 border-t border-surface-700/50 shrink-0">
       <div class="flex items-center gap-3">
-        <div class="w-8 h-8 rounded-full bg-surface-700 flex items-center justify-center text-xs font-medium text-surface-300">SC</div>
-        <div class="min-w-0">
-          <p class="text-sm font-medium text-surface-200 truncate">Sarah Chen</p>
-          <p class="text-xs text-surface-500">Admin</p>
+        <div class="w-8 h-8 rounded-full bg-surface-700 flex items-center justify-center text-xs font-medium text-surface-300 shrink-0">{{ initials }}</div>
+        <div class="min-w-0 flex-1">
+          <p class="text-sm font-medium text-surface-200 truncate">{{ auth.user?.full_name || auth.user?.username || 'Unknown' }}</p>
+          <p class="text-xs text-surface-500 capitalize">{{ auth.user?.role || '' }}</p>
         </div>
+        <button
+          class="btn-ghost p-1.5 shrink-0"
+          title="Sign out"
+          @click="onLogout"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 9V5.25A2.25 2.25 0 0110.5 3h6a2.25 2.25 0 012.25 2.25v13.5A2.25 2.25 0 0116.5 21h-6a2.25 2.25 0 01-2.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3H15" />
+          </svg>
+        </button>
       </div>
     </div>
   </aside>

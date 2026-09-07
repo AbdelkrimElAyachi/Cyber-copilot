@@ -4,4 +4,10 @@ sqlalchemy>=2.0.0,<3.0.0
 pymysql>=1.1.0,<2.0.0
 fastapi>=0.115.0,<1.0.0
 uvicorn>=0.30.0,<1.0.0
+# Lets `uvicorn --reload` use an event-driven file watcher instead of its
+# polling fallback, which was found busy-looping (~50% sustained CPU) and
+# occasionally wedging the dev server against a tree containing
+# frontend/node_modules.
+watchfiles>=0.21.0,<2.0.0
 requests>=2.31.0,<3.0.0
+pyjwt>=2.8.0,<3.0.0

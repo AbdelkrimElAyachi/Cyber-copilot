@@ -1,13 +1,19 @@
 <script setup>
 import { ref } from 'vue'
+import { useRoute } from 'vue-router'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppHeader from './components/layout/AppHeader.vue'
 
 const sidebarOpen = ref(false)
+const route = useRoute()
 </script>
 
 <template>
-  <div class="min-h-screen bg-surface-950 flex">
+  <!-- Public pages (login) render without the app shell — there's no
+       session yet for the sidebar/header to reflect. -->
+  <router-view v-if="route.meta.public" />
+
+  <div v-else class="min-h-screen bg-surface-950 flex">
     <!-- Mobile overlay -->
     <div
       v-if="sidebarOpen"

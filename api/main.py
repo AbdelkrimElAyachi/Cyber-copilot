@@ -16,11 +16,11 @@ setup_logging()  # before anything else logs, so nothing is missed
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.dependencies import startup, shutdown
-from api.routers import investigations, policies, assets, users, system, chat
+from api.dependencies import startup, shutdown, get_current_user
+from api.routers import auth, investigations, policies, assets, users, system, chat
 
 
 # ── Lifespan ────────────────────────────────────────────────────────────
@@ -54,12 +54,19 @@ app.add_middleware(
 
 # ── Routers ─────────────────────────────────────────────────────────────
 
-app.include_router(investigations.router)
-app.include_router(policies.router)
-app.include_router(assets.router)
-app.include_router(users.router)
-app.include_router(system.router)
-app.include_router(chat.router)
+# auth.router is the one exception — it's how a token is obtained, so it
+# can't itself require one. Everything else needs a valid bearer token;
+# there's a single access tier today (see api/auth.py), so this is a
+# login wall rather than per-route permission checks for now.
+app.include_router(auth.router)
+
+_protected = Depends(get_current_user)
+app.include_router(investigations.router, dependencies=[_protected])
+app.include_router(policies.router, dependencies=[_protected])
+app.include_router(assets.router, dependencies=[_protected])
+app.include_router(users.router, dependencies=[_protected])
+app.include_router(system.router, dependencies=[_protected])
+app.include_router(chat.router, dependencies=[_protected])
 
 
 # ── Health check ────────────────────────────────────────────────────────

@@ -10,13 +10,17 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Optional
 
 from dotenv import load_dotenv
+from fastapi import Header, HTTPException, status
+import jwt
 
 from database import Database
 from investigation_manager import InvestigationManager
 from investigation_policy import PolicyEngine
 from poller_service import PollerService
+from api import auth as auth_core
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +115,37 @@ def get_ai_investigator():
 def get_chatbot():
     """Return the shared SecurityChatbot instance, or None if unavailable."""
     return chatbot
+
+
+def get_current_user(
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Validate the bearer token and return the authenticated user's row.
+
+    Raises 401 for anything wrong with the token (missing, malformed,
+    expired, signed with a different secret) and for a deactivated
+    account — kept as one generic error so a client can't distinguish
+    "no token" from "bad token" from "disabled account".
+    """
+    unauthorized = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    token = auth_core.extract_bearer_token(authorization)
+    if not token:
+        raise unauthorized
+    try:
+        payload = auth_core.decode_access_token(token)
+    except jwt.PyJWTError:
+        raise unauthorized
+    except auth_core.AuthConfigError:
+        raise unauthorized
+
+    user = db.fetchone("SELECT * FROM users WHERE id = %s", (payload.get("sub"),))
+    if not user or not user.get("is_active"):
+        raise unauthorized
+    return user
 
 
 # ── Lifecycle Hooks ─────────────────────────────────────────────────────
