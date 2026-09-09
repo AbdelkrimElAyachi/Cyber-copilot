@@ -1,0 +1,128 @@
+\chapter{Présentation des résultats}
+\label{chap:resultats}
+
+\section{Scénario de bout en bout}
+
+Le scénario suivant illustre le fonctionnement complet de la chaîne mise en
+œuvre~:
+
+\begin{enumerate}
+  \item Un agent Wazuh détecte un événement suspect sur un hôte surveillé
+        (par exemple, une création de compte utilisateur inhabituelle) et
+        génère une alerte, indexée dans le Wazuh Indexer.
+  \item Le \textit{Poller Service}, lors de son cycle suivant, récupère
+        cette alerte et la soumet au \textit{Policy Engine}, qui juge sa
+        sévérité suffisante pour ouvrir une investigation.
+  \item L'\textit{Investigation Manager} crée l'investigation, l'associe à
+        l'actif correspondant, et la transmet à l'\textit{AI Investigator}.
+  \item L'agent récupère son contexte de référence (fiche de l'actif,
+        alertes récentes du même agent), puis décide, par exemple,
+        d'interroger \texttt{search\_alerts} pour vérifier si des alertes
+        similaires ont déjà été observées sur ce même hôte, et
+        \texttt{check\_ip\_reputation} si une adresse IP externe est
+        impliquée.
+  \item Sur la base des preuves réunies, l'agent produit un verdict
+        (\texttt{TRUE\_POSITIVE}, \texttt{FALSE\_POSITIVE} ou
+        \texttt{NEEDS\_REVIEW}) accompagné d'un niveau de confiance et
+        d'une explication.
+  \item L'analyste consulte ce verdict, la chronologie complète des actions
+        effectuées par l'IA et les preuves associées depuis l'interface
+        web, et peut poser des questions complémentaires à l'assistant
+        conversationnel (par exemple~: \og combien d'alertes ce mois-ci
+        proviennent de cet hôte~?\fg{}, désormais résolu de manière exacte
+        par l'outil \texttt{count\_alerts} plutôt qu'estimé à partir de
+        résultats de recherche plafonnés).
+\end{enumerate}
+
+\section{Validations fonctionnelles effectuées}
+
+Le projet ne dispose pas, à ce stade, d'une suite de tests automatisés
+(voir \cref{sec:limites}). La validation s'est appuyée sur des vérifications
+fonctionnelles ciblées, effectuées à chaque étape de développement contre
+les services réels (Wazuh Indexer, base MySQL, API de LLM), plutôt que sur
+des données simulées. Le \cref{tab:validations} en résume les principales.
+
+\begin{table}[H]
+\centering
+\caption{Principales validations fonctionnelles effectuées}
+\label{tab:validations}
+\begin{tabular}{@{}p{5cm}p{8cm}@{}}
+\toprule
+\textbf{Fonctionnalité validée} & \textbf{Méthode et résultat} \\
+\midrule
+Boucle d'investigation agentique & Exécution de bout en bout sur des
+alertes réelles jusqu'à l'obtention d'un verdict enregistré \\
+Détection des appels d'outils dupliqués & Vérifié qu'un second appel
+identique réutilise le résultat mis en cache au lieu de solliciter à
+nouveau Wazuh/MySQL \\
+Normalisation des arguments d'outils & Reproduction du cas où le modèle
+transmet un entier sous forme de chaîne (\texttt{"limit": "50"}), confirmée
+corrigée après implémentation \\
+Comptage exact des alertes/investigations & Comparaison entre le résultat
+de \texttt{count\_alerts}/\texttt{count\_investigations} et une requête de
+comptage directe~: résultats identiques \\
+Authentification & Scénarios~: identifiants valides, identifiants
+invalides, jeton absent, jeton expiré/invalide -- chacun renvoie le code
+HTTP attendu (200 ou 401) \\
+Délégation au Wazuh Indexer & Connexion réussie avec un compte Wazuh
+existant, rejet d'un mot de passe erroné \\
+Restriction d'accès aux données d'identité & Confirmation qu'aucun outil
+disponible pour l'IA ne référence la table \texttt{users} \\
+Réputation d'IP (AbuseIPDB) & Appel réel sur une IP publique connue et sur
+une IP privée (court-circuitée localement, sans appel réseau) \\
+Interface web & Compilation de production du frontend sans erreur,
+navigation entre les écrans principaux \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Limites constatées}
+\label{sec:limites}
+
+\begin{itemize}
+  \item \textbf{Absence de suite de tests automatisés}~: les validations
+        décrites ci-dessus ont été effectuées manuellement à chaque
+        évolution significative ; l'ajout de tests automatisés
+        (unitaires sur les outils et la boucle agentique, tests
+        d'intégration sur l'API) constitue une priorité pour la suite du
+        projet.
+  \item \textbf{Un seul niveau d'accès}~: tout utilisateur authentifié
+        dispose actuellement des mêmes droits sur l'ensemble des
+        fonctionnalités ; la table \texttt{users} porte un champ de rôle
+        exploitable, mais aucune vérification de permission n'est encore
+        appliquée dessus.
+  \item \textbf{Pas d'annulation d'une investigation en cours}~: une fois
+        démarrée, une investigation s'exécute jusqu'à son terme, une
+        erreur, ou un redémarrage du serveur.
+  \item \textbf{Variabilité liée au modèle de langage employé}~: la
+        qualité et la stabilité des verdicts dépendent du modèle choisi ;
+        les modèles de plus petite taille peuvent nécessiter davantage
+        d'itérations avant de converger, ce que les garde-fous
+        (\cref{chap:implementation}) atténuent sans l'éliminer totalement.
+  \item \textbf{Portée volontairement limitée des sources de données}~:
+        l'intégration d'autres sources (Suricata, journaux \textit{cloud}
+        de type CloudTrail) et de mécanismes de \textit{retrieval-augmented
+        generation} (RAG) sur une base de connaissances de menaces n'a pas
+        été réalisée dans cette version, l'architecture par outils
+        (\texttt{Tool}) étant conçue pour rendre ces ajouts additifs.
+\end{itemize}
+
+\section{Discussion}
+
+L'approche agentique retenue présente un avantage déterminant par rapport à
+une automatisation à base de règles fixes~: elle s'adapte à des situations
+non anticipées lors de la conception, en mobilisant les outils pertinents au
+cas par cas plutôt qu'en suivant un scénario figé. Cette flexibilité a
+toutefois un coût~: la latence et le coût monétaire d'une investigation
+dépendent directement du nombre d'appels au modèle de langage, ce qui a
+directement motivé plusieurs des garde-fous mis en œuvre (budget d'étapes,
+détection de doublons, bornage de la taille du contexte). L'expérience du
+projet montre par ailleurs qu'un fournisseur de LLM externe introduit des
+contraintes opérationnelles propres (quotas de débit, formats de réponse
+parfois non strictement conformes au schéma attendu) qui ont dû être
+absorbées par la couche applicative plutôt que supposées absentes — la
+normalisation des arguments d'outils (\cref{lst:coerce}) en est un exemple
+direct. C'est également ce qui justifie la conception de l'interface
+\texttt{LLMProvider} comme une abstraction remplaçable~: le projet reste en
+mesure de migrer vers un modèle auto-hébergé sans remise en cause de la
+logique métier.

@@ -1,0 +1,105 @@
+% ============================================================
+% Préambule — packages, couleurs, styles de code, macros
+% ============================================================
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+% NOTE — babel[french]: this machine's TeX Live install is missing the
+% french.ldf language file (`sudo apt install texlive-lang-french` would
+% add it; it's present by default on Overleaf and most full TeX Live
+% installs). Uncomment the line below once that package is available —
+% it gives correct automatic spacing before « ; : ! ? » and better
+% hyphenation. Until then, \og/\fg (French guillemets) are defined by
+% hand just below so the document doesn't depend on it either way.
+% \usepackage[french]{babel}
+\providecommand{\og}{\guillemotleft\,}
+\providecommand{\fg}{\,\guillemotright}
+\usepackage[a4paper,left=3cm,right=2.5cm,top=2.5cm,bottom=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{tocbibind}
+\usepackage{setspace}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{shapes,arrows.meta,positioning,fit,backgrounds,calc}
+\usepackage{pgfgantt}
+\usepackage{pgf-umlcd}
+\usepackage{pgf-umlsd}
+\usepackage{amsmath,amssymb}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black,bookmarksopen=true]{hyperref}
+\usepackage[french]{cleveref}
+
+% -------------------- Couleurs maison --------------------
+\definecolor{brandblue}{RGB}{30,64,120}
+\definecolor{brandlight}{RGB}{235,240,248}
+\definecolor{codebg}{RGB}{246,246,246}
+\definecolor{codekw}{RGB}{0,90,150}
+\definecolor{codestr}{RGB}{130,20,20}
+\definecolor{codecom}{RGB}{100,100,100}
+
+% -------------------- En-têtes / pieds de page --------------------
+\setlength{\headheight}{14pt}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancyhead[L]{\small\slshape\leftmark}
+\fancyhead[R]{\small\thepage}
+\fancypagestyle{plain}{%
+  \fancyhf{}
+  \fancyhead[L]{\small\slshape\leftmark}
+  \fancyhead[R]{\small\thepage}
+  \renewcommand{\headrulewidth}{0.4pt}
+}
+
+% -------------------- Titres de chapitres --------------------
+\titleformat{\chapter}[display]
+  {\normalfont\huge\bfseries\color{brandblue}}
+  {\filright\Large\chaptertitlename\ \thechapter}
+  {10pt}{\Huge}
+\titlespacing*{\chapter}{0pt}{0pt}{30pt}
+
+% -------------------- Style de code (listings) --------------------
+\lstdefinestyle{codestyle}{
+  backgroundcolor=\color{codebg},
+  commentstyle=\color{codecom}\itshape,
+  keywordstyle=\color{codekw}\bfseries,
+  stringstyle=\color{codestr},
+  basicstyle=\ttfamily\footnotesize,
+  breakatwhitespace=false,
+  breaklines=true,
+  captionpos=b,
+  keepspaces=true,
+  numbers=left,
+  numbersep=6pt,
+  numberstyle=\tiny\color{gray},
+  showspaces=false,
+  showstringspaces=false,
+  showtabs=false,
+  tabsize=2,
+  frame=single,
+  rulecolor=\color{gray!40},
+  xleftmargin=1.5em,
+  framexleftmargin=1.2em
+}
+\lstset{style=codestyle}
+
+% -------------------- Macros pratiques --------------------
+\newcommand{\todofig}[1]{%
+  \begin{center}
+  \fbox{\parbox{0.9\linewidth}{\centering\itshape\color{gray}
+  [Emplacement réservé — #1]}}
+  \end{center}
+}
+\newcommand{\projectname}{Cyber Copilot}
+\newcommand{\acr}[2]{\item[\textbf{#1}] #2}
+
+\setstretch{1.15}
+\setlist{itemsep=2pt, topsep=4pt}

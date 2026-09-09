@@ -1,0 +1,251 @@
+\chapter{Implémentation / Réalisation}
+\label{chap:implementation}
+
+\section{Environnement de travail}
+
+\subsection{Environnement logiciel}
+
+\begin{itemize}
+  \item \textbf{Langage backend~:} Python 3.10
+  \item \textbf{Framework web~:} FastAPI \cite{fastapi_docs}, serveur
+        ASGI Uvicorn
+  \item \textbf{Base de données applicative~:} MySQL 8
+  \item \textbf{Client Wazuh Indexer~:} \texttt{opensearch-py}
+  \item \textbf{Frontend~:} Vue 3 \cite{vuejs_docs} (Composition API),
+        Pinia (gestion d'état), Vue Router, Tailwind CSS, Vite
+        (\textit{build tool})
+  \item \textbf{Fournisseurs de LLM~:} toute API compatible
+        \texttt{/chat/completions} au format OpenAI
+        \cite{openai_toolcalling} (Groq utilisé en développement), ou un
+        modèle auto-hébergé via Ollama \cite{ollama_docs}
+  \item \textbf{Enrichissement externe~:} API AbuseIPDB \cite{abuseipdb}
+        pour la réputation d'adresses IP
+  \item \textbf{Gestion de versions~:} Git
+\end{itemize}
+
+\subsection{Environnement matériel}
+
+Le développement et les tests ont été réalisés sur une machine de
+développement standard (architecture x86-64, système Linux), le Wazuh
+Indexer et la base MySQL étant déployés localement pour les besoins du
+développement. Le caractère \textit{stateless} de l'API et l'absence de
+traitement lourd côté serveur (le calcul est délégué au fournisseur de LLM)
+rendent le déploiement peu exigeant en ressources~; un serveur disposant de
+quelques gigaoctets de mémoire suffit pour l'exécution de l'API, de la base
+de données et, le cas échéant, d'un modèle local de taille modeste via
+Ollama.
+
+\section{Description et traitement des données}
+
+Deux sources de données coexistent dans la plateforme~:
+
+\begin{description}
+  \item[Les alertes Wazuh] sont des documents JSON stockés dans le Wazuh
+    Indexer, structurés notamment autour des champs \texttt{rule} (identifiant
+    et niveau de sévérité de la règle déclenchée), \texttt{agent}
+    (identifiant et nom de l'hôte concerné), \texttt{data} (champs extraits
+    par les décodeurs Wazuh, tels que \texttt{srcip}/\texttt{dstip}) et
+    \texttt{full\_log} (la ligne de journal brute). Ces documents sont
+    interrogés en lecture seule~; la plateforme ne modifie jamais les
+    alertes elles-mêmes.
+  \item[Les données applicatives] sont stockées dans une base MySQL
+    relationnelle (schéma détaillé en \cref{fig:erd}), couvrant les
+    investigations, les preuves collectées, les analyses produites, les
+    actions de l'IA, les actifs, les politiques, les utilisateurs et les
+    conversations de l'assistant. Les tables sont créées et migrées
+    automatiquement au démarrage du serveur.
+\end{description}
+
+\section{Modules principaux}
+
+\subsection{Collecte et politiques (\texttt{poller\_service.py},
+\texttt{investigation\_policy.py})}
+
+Le \textbf{Poller Service} interroge le Wazuh Indexer à intervalle
+configurable, en ne retenant que les alertes postérieures au dernier
+horodatage traité (mécanisme de \textit{watermark} persistant, pour éviter
+les doublons ou les pertes entre deux cycles). Chaque alerte récupérée est
+soumise au \textbf{Policy Engine}, qui évalue un ensemble de règles
+configurables (sévérité minimale, groupes de règles, agents concernés) afin
+de décider si une investigation doit être ouverte.
+
+\subsection{Gestion des investigations (\texttt{investigation\_manager.py})}
+
+L'\textbf{Investigation Manager} crée l'enregistrement d'investigation,
+recherche ou crée automatiquement l'\textbf{actif} correspondant à l'agent
+Wazuh concerné, puis transmet l'investigation à l'AI Investigator.
+
+\subsection{Agent d'investigation (\texttt{ai\_investigator/investigator.py})}
+
+C'est le cœur du projet. Étant donné une alerte déclenchante, l'agent~:
+
+\begin{enumerate}
+  \item récupère un \textbf{contexte de référence} (fiche de l'actif
+        concerné et historique récent d'alertes du même agent) avant même
+        de commencer à raisonner, pour répondre immédiatement à la question
+        \og ce comportement est-il habituel pour cet hôte~?\fg{} sans appel
+        d'outil supplémentaire~;
+  \item engage une \textbf{boucle agentique} (inspirée du paradigme ReAct
+        \cite{react2022}, \cref{chap:etat_de_lart})~: à chaque étape, le
+        modèle de langage reçoit l'historique de la conversation et la
+        liste des outils disponibles, et peut soit appeler un outil, soit
+        rendre son verdict~;
+  \item lorsqu'un outil est appelé, celui-ci est exécuté, son résultat est
+        journalisé (table \texttt{investigation\_actions}, avec le
+        raisonnement du modèle au moment de l'appel) et réinjecté dans la
+        conversation~;
+  \item la boucle se termine lorsque le modèle produit un verdict, ou
+        lorsqu'un budget d'étapes est atteint, auquel cas un verdict final
+        est forcé (\texttt{tool\_choice="none"}) sur la base des preuves
+        déjà réunies.
+\end{enumerate}
+
+\paragraph{Garde-fous de la boucle agentique.} Un modèle de langage
+n'étant pas un composant strictement déterministe ni intrinsèquement borné
+en coût, plusieurs mécanismes de protection ont été mis en place~:
+
+\begin{itemize}
+  \item un nombre maximal d'itérations (\texttt{MAX\_STEPS})~;
+  \item une taille maximale par résultat d'outil et pour la conversation
+        totale renvoyée au modèle (\texttt{MAX\_TOOL\_RESULT\_CHARS},
+        \texttt{MAX\_CONVERSATION\_CHARS}), les appels \textit{chat
+        completions} étant \textit{stateless} et donc facturés/limités sur
+        l'intégralité du contexte renvoyé à chaque tour~;
+  \item une \textbf{détection des appels d'outils dupliqués}~: un appel
+        strictement identique (même outil, mêmes arguments) à un appel déjà
+        effectué dans la même investigation n'est pas réexécuté, son
+        résultat déjà connu est simplement rappelé au modèle~;
+  \item une \textbf{normalisation des arguments} reçus du modèle~: un LLM
+        peut renvoyer un entier sous forme de chaîne de caractères
+        (\texttt{"50"} au lieu de \texttt{50}) dans son appel de fonction ;
+        chaque outil convertit automatiquement ses arguments selon son
+        propre schéma JSON avant exécution (\cref{lst:coerce})~;
+  \item des \textbf{délais d'expiration réseau} explicites sur les appels
+        au fournisseur de LLM et au Wazuh Indexer~;
+  \item une exécution de l'investigation entièrement encadrée par une
+        gestion d'erreurs~: toute exception (LLM, outil, base de données)
+        aboutit à un verdict \texttt{ERROR} enregistré plutôt qu'à une
+        investigation bloquée indéfiniment à l'état \og en cours\fg.
+\end{itemize}
+
+\begin{lstlisting}[language=Python, caption={Normalisation générique des
+arguments d'un outil selon son schéma JSON}, label={lst:coerce}]
+def coerce_arguments(self, arguments: dict) -> dict:
+    """Cast argument values to match this tool's declared JSON
+    Schema types, e.g. {"limit": "50"} -> {"limit": 50}."""
+    props = self.parameters.get("properties", {})
+    coerced = dict(arguments)
+    for key, spec in props.items():
+        if key not in coerced or not isinstance(coerced[key], str):
+            continue
+        expected = spec.get("type")
+        raw = coerced[key].strip()
+        try:
+            if expected == "integer":
+                coerced[key] = int(raw)
+            elif expected == "number":
+                coerced[key] = float(raw)
+        except ValueError:
+            pass  # left as-is; execute() surfaces the problem
+    return coerced
+\end{lstlisting}
+
+\subsection{Outils disponibles pour l'IA}
+
+Le \cref{tab:tools} liste les outils partagés par l'agent d'investigation
+et l'assistant conversationnel. Ils sont volontairement en \textbf{lecture
+seule}.
+
+\begin{table}[H]
+\centering
+\caption{Outils exposés à l'IA}
+\label{tab:tools}
+\begin{tabular}{@{}p{3.6cm}p{3cm}p{7cm}@{}}
+\toprule
+\textbf{Outil} & \textbf{Source} & \textbf{Rôle} \\
+\midrule
+\texttt{search\_alerts} & Wazuh Indexer & Rechercher des alertes par
+agent, IP, règle, plage temporelle, texte libre \\
+\texttt{count\_alerts} & Wazuh Indexer & Compter exactement les alertes
+correspondant à des filtres, sans les limites de \texttt{search\_alerts} \\
+\texttt{get\_alert\_details} & Wazuh Indexer & Détail complet d'une
+alerte \\
+\texttt{search\_investigations} & MySQL & Rechercher des investigations
+passées \\
+\texttt{count\_investigations} & MySQL & Compter exactement les
+investigations correspondant à des filtres \\
+\texttt{get\_investigation}, \texttt{get\_investigation\_evidence},
+\texttt{get\_investigation\_analysis} & MySQL & Détail, preuves et
+analyses d'une investigation \\
+\texttt{search\_assets}, \texttt{get\_asset} & MySQL & Rechercher/consulter
+un actif (hôte) \\
+\texttt{check\_ip\_reputation} & AbuseIPDB \cite{abuseipdb} & Score de
+réputation d'une adresse IP publique (score de confiance d'abus, nombre de
+signalements, pays, fournisseur) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Assistant conversationnel (\texttt{ai\_investigator/chatbot.py})}
+
+L'assistant conversationnel réutilise exactement le même ensemble d'outils
+que l'agent d'investigation (\cref{fig:classdiag}), mais dans un cadre
+multi-tours en libre échange plutôt que centré sur une alerte unique. Pour
+éviter que la taille de la conversation — et donc le coût des appels au
+LLM — ne croisse indéfiniment au fil d'une session de discussion, seule la
+question de l'utilisateur et la réponse finale de l'assistant sont
+persistées~: l'éventuel aller-retour d'appels d'outils au sein d'un tour de
+conversation est reconstruit à partir de l'historique, puis abandonné une
+fois la réponse produite.
+
+\subsection{Authentification (\texttt{api/auth.py})}
+
+Conformément à la conception présentée en \cref{sec:securite_conception},
+la vérification des identifiants (\cref{lst:auth}) consiste en une simple
+requête HTTP authentifiée vers le Wazuh Indexer~: une réponse \texttt{200}
+confirme la validité du couple identifiant/mot de passe, une réponse
+\texttt{401}/\texttt{403} l'infirme. Le mot de passe n'est jamais persisté.
+
+\begin{lstlisting}[language=Python, caption={Vérification des identifiants
+auprès du Wazuh Indexer}, label={lst:auth}]
+def verify_wazuh_credentials(username, password, *,
+                              host, port, verify_ssl,
+                              timeout=5.0) -> bool:
+    try:
+        resp = requests.get(
+            f"https://{host}:{port}/",
+            auth=(username, password),
+            verify=verify_ssl,
+            timeout=timeout,
+        )
+    except requests.exceptions.RequestException:
+        return False
+    if resp.status_code == 200:
+        return True
+    if resp.status_code in (401, 403):
+        return False
+    return False  # erreur cote Indexer, pas une preuve d'invalidite
+\end{lstlisting}
+
+Un jeton JWT signé (durée de vie configurable, 12 heures par défaut) est
+ensuite émis et doit accompagner chaque requête suivante
+(\textit{header} \texttt{Authorization: Bearer <token>}). Toutes les routes
+de l'API sont protégées par ce mécanisme, à l'exception de la route de
+connexion elle-même et du point de contrôle de santé (\textit{health
+check}).
+
+\section{Interface utilisateur}
+
+L'interface web (Vue 3) propose les écrans suivants~: un \textbf{tableau de
+bord} synthétisant l'état des investigations en cours, une \textbf{liste
+des investigations} filtrable, une \textbf{vue détail} par investigation
+(chronologie des actions de l'IA, preuves, verdict), une \textbf{gestion
+des politiques} et des \textbf{actifs}, un \textbf{assistant conversationnel}
+(historique de sessions, affichage du raisonnement et de la trace des
+outils appelés lorsqu'ils sont disponibles), et un \textbf{écran de
+connexion}.
+
+\todofig{Capture d'écran -- Tableau de bord}
+\todofig{Capture d'écran -- Détail d'une investigation (chronologie des
+actions de l'IA et verdict)}
+\todofig{Capture d'écran -- Assistant conversationnel}

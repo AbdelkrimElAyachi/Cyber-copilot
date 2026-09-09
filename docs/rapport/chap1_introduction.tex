@@ -1,0 +1,179 @@
+\chapter{Introduction générale}
+\label{chap:introduction}
+
+\section{Contexte général}
+
+La multiplication des cybermenaces et la sophistication croissante des
+attaques informatiques ont conduit la majorité des organisations à se doter
+de systèmes de détection et de supervision de sécurité, communément appelés
+\textbf{SIEM} (\textit{Security Information and Event Management}). Ces
+plateformes centralisent les journaux (\textit{logs}) issus des différents
+équipements du système d'information — postes de travail, serveurs,
+équipements réseau — et génèrent des \textbf{alertes} lorsqu'un comportement
+suspect est détecté.
+
+Dans ce projet, nous nous appuyons sur \textbf{Wazuh}, une plateforme SIEM/XDR
+open source largement adoptée, qui combine un agent de collecte installé sur
+les hôtes surveillés, un moteur de règles de détection, et un moteur de
+recherche (\textit{Wazuh Indexer}, basé sur OpenSearch) qui stocke et indexe
+les alertes générées.
+
+Le problème central que rencontrent les équipes de sécurité opérationnelle
+(\textbf{SOC}) n'est cependant pas la détection elle-même, mais le
+\textbf{volume} d'alertes à traiter quotidiennement. Une étude régulièrement
+citée dans l'industrie (rapports annuels de fournisseurs SIEM et enquêtes
+SANS sur les opérations SOC) montre qu'un analyste peut être confronté à
+plusieurs centaines, voire plusieurs milliers, d'alertes par jour, dont une
+large proportion sont des \textbf{faux positifs}. Ce phénomène, connu sous le
+nom de \textit{fatigue liée aux alertes} (\textit{alert fatigue}), dégrade la
+capacité de détection réelle des menaces : les analystes finissent par
+traiter les alertes de manière superficielle, voire par les ignorer.
+
+\section{Problématique}
+
+Comment réduire la charge de triage manuel des alertes de sécurité tout en
+conservant — voire en améliorant — la qualité et la traçabilité des
+décisions prises~? Plus précisément, ce projet cherche à répondre aux
+questions suivantes~:
+
+\begin{itemize}
+  \item Peut-on automatiser la phase d'\textbf{investigation initiale} d'une
+        alerte (collecte de contexte, recherche d'alertes corrélées,
+        vérification de la réputation d'une adresse IP, etc.) à l'aide d'un
+        agent d'intelligence artificielle~?
+  \item Un tel agent peut-il produire un \textbf{verdict argumenté}
+        (\textit{vrai positif}, \textit{faux positif}, ou \textit{à revoir})
+        avec un niveau de confiance et une justification exploitable par un
+        humain~?
+  \item Comment garantir que cet agent reste \textbf{fiable, traçable et
+        borné} (en coût, en temps, en accès aux données) alors qu'il
+        s'appuie sur un modèle de langage dont le comportement n'est pas
+        entièrement déterministe~?
+  \item Comment restreindre l'accès de l'agent aux données sensibles
+        (identités des utilisateurs, par exemple) sans complexifier son
+        architecture~?
+\end{itemize}
+
+\section{Objectifs du projet}
+
+L'objectif général du projet est de concevoir et développer
+\textbf{\projectname}, une plateforme web qui~:
+
+\begin{enumerate}
+  \item collecte automatiquement les alertes générées par Wazuh
+        (\textit{polling} périodique sur le Wazuh Indexer)~;
+  \item détermine, à l'aide d'un \textbf{moteur de politiques}
+        configurable, quelles alertes méritent l'ouverture d'une
+        investigation~;
+  \item confie chaque investigation à un \textbf{agent IA} (\textit{AI
+        Investigator}) qui raisonne de manière itérative
+        (\textit{boucle agentique}) : il consulte des outils (recherche
+        d'alertes, historique des investigations, réputation d'IP,
+        informations sur les actifs), accumule des preuves, puis rend un
+        verdict argumenté~;
+  \item enregistre \textbf{chaque action} de l'agent (outil appelé,
+        raisonnement, résultat) pour permettre un audit humain complet~;
+  \item propose un \textbf{assistant conversationnel} (chatbot) partageant
+        les mêmes outils, pour interroger librement la plateforme en
+        langage naturel~;
+  \item sécurise l'accès à la plateforme par une
+        \textbf{authentification} déléguée aux comptes Wazuh existants,
+        évitant la duplication d'une base de mots de passe~;
+  \item expose l'ensemble via une \textbf{interface web} (tableau de bord,
+        liste et détail des investigations, gestion des actifs et des
+        politiques, chat).
+\end{enumerate}
+
+\section{Méthodologie de gestion du projet}
+
+Le projet a été mené selon une démarche \textbf{itérative et incrémentale},
+proche des principes agiles~: chaque brique fonctionnelle (collecte
+d'alertes, moteur de politiques, agent d'investigation, interface web,
+assistant conversationnel, authentification) a été conçue, développée puis
+validée indépendamment avant intégration, ce qui a permis d'obtenir à tout
+moment une chaîne fonctionnelle de bout en bout, même partielle.
+
+Le déroulement du projet a suivi les grandes phases imposées par le cadre
+pédagogique du Projet de Fin d'Année~: définition du sujet, étude de
+l'existant, conception, implémentation, présentation des résultats, et
+rédaction du rapport. Le diagramme de Gantt ci-dessous synthétise cette
+planification.
+
+\begin{figure}[H]
+\centering
+\begin{ganttchart}[
+    vgrid, hgrid,
+    x unit=0.62cm,
+    y unit chart=0.7cm,
+    bar/.append style={fill=brandblue},
+    bar height=0.55,
+    group/.append style={fill=brandblue!60},
+    milestone/.append style={fill=orange},
+    title label font=\small\bfseries,
+    bar label font=\small,
+    group label font=\small\bfseries,
+  ]{1}{16}
+  \gantttitle{Semaines du projet (S1 -- S16)}{16} \\
+  \gantttitlelist{1,...,16}{1} \\
+  \ganttgroup{Phase 1 -- Définition du projet}{1}{2} \\
+  \ganttbar{Cadrage sujet, contexte, objectifs}{1}{1} \\
+  \ganttbar{Faisabilité \& méthodologie}{2}{2} \\
+  \ganttmilestone{Jalon : validation du sujet}{2} \\
+  \ganttgroup{Phase 2 -- Étude de l'existant}{3}{4} \\
+  \ganttbar{État de l'art \& solutions existantes}{3}{4} \\
+  \ganttgroup{Phase 3 -- Conception}{5}{7} \\
+  \ganttbar{Architecture \& choix technologiques}{5}{5} \\
+  \ganttbar{Modélisation UML \& base de données}{6}{7} \\
+  \ganttgroup{Phase 4 -- Implémentation}{8}{13} \\
+  \ganttbar{Collecte \& moteur de politiques}{8}{9} \\
+  \ganttbar{Agent d'investigation IA}{9}{11} \\
+  \ganttbar{Assistant conversationnel}{11}{12} \\
+  \ganttbar{Authentification}{12}{12} \\
+  \ganttbar{Interface web}{10}{13} \\
+  \ganttgroup{Phase 5 -- Résultats \& validation}{14}{14} \\
+  \ganttbar{Tests fonctionnels \& démonstration}{14}{14} \\
+  \ganttgroup{Phase 6 -- Rédaction \& soutenance}{15}{16} \\
+  \ganttbar{Rédaction du rapport}{15}{16} \\
+  \ganttmilestone{Jalon : soutenance}{16}
+\end{ganttchart}
+\caption{Diagramme de Gantt du projet}
+\label{fig:gantt}
+\end{figure}
+
+\section{Étude de faisabilité}
+
+La faisabilité du projet a été évaluée selon trois axes~:
+
+\begin{description}
+  \item[Faisabilité technique] L'ensemble des briques technologiques
+    retenues (Wazuh, Python/FastAPI, MySQL, Vue.js, API compatibles
+    OpenAI pour les LLM) est \textbf{open source ou disponible en accès
+    libre}, et documenté. Un environnement Wazuh de test est disponible ainsi
+    qu'un accès à des API de LLM (Groq, compatible OpenAI) pour le
+    prototypage rapide, avec la possibilité de migrer vers un modèle
+    hébergé localement (Ollama) pour s'affranchir des contraintes de quota
+    et de coût — cette portabilité est un objectif de conception du projet
+    (voir \cref{chap:conception}).
+  \item[Faisabilité temporelle] Le découpage en phases courtes
+    (\cref{fig:gantt}) et la démarche incrémentale permettent de disposer
+    en permanence d'une version fonctionnelle, réduisant le risque de ne
+    pas aboutir à une démonstration exploitable en fin de projet.
+  \item[Faisabilité humaine] Les compétences requises (développement
+    backend Python, développement frontend JavaScript/Vue, notions de
+    bases de données relationnelles, notions de sécurité informatique)
+    correspondent au programme de la filière et sont réparties entre les
+    membres du groupe.
+\end{description}
+
+\section{Plan du rapport}
+
+Ce rapport est organisé en six chapitres. Le \textbf{chapitre 2} dresse un
+état de l'art des SIEM, des approches d'automatisation du triage d'alertes
+(SOAR) et des travaux récents sur l'usage d'agents fondés sur des modèles de
+langage en cybersécurité. Le \textbf{chapitre 3} présente la conception de la
+solution~: architecture globale, modélisation UML et modèle de données. Le
+\textbf{chapitre 4} détaille l'implémentation~: environnement de travail,
+traitement des données et description des modules réalisés. Le
+\textbf{chapitre 5} présente les résultats obtenus et leur discussion.
+Enfin, le \textbf{chapitre 6} conclut le rapport et ouvre sur les
+perspectives d'évolution du projet.

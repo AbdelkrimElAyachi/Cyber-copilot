@@ -1,0 +1,133 @@
+\chapter{État de l'art}
+\label{chap:etat_de_lart}
+
+\section{Gestion des incidents de sécurité et SIEM}
+
+La gestion des incidents de sécurité informatique s'appuie sur un cycle
+largement standardisé dans l'industrie~: préparation, détection et analyse,
+confinement/éradication/récupération, puis retour d'expérience. Ce cycle est
+notamment formalisé par le \textit{National Institute of Standards and
+Technology} (NIST) dans son guide \textit{Computer Security Incident
+Handling Guide} \cite{nist80061}, qui reste une référence de facto pour la
+structuration des opérations de sécurité.
+
+Les plateformes \textbf{SIEM} automatisent la partie \og détection et
+analyse\fg{} en centralisant les journaux d'événements de multiples sources
+(systèmes d'exploitation, pare-feux, applications) et en appliquant des
+règles de corrélation pour générer des alertes. Elles constituent aujourd'hui
+un composant central de tout \textbf{SOC}, mais elles ne résolvent pas, par
+elles-mêmes, le problème du \textbf{volume} d'alertes à traiter.
+
+\section{Wazuh comme plateforme SIEM/XDR open source}
+
+\textbf{Wazuh} \cite{wazuh_docs} est une plateforme de sécurité open source
+issue d'un \textit{fork} d'OSSEC, qui combine les fonctions d'un
+\textit{Host-based Intrusion Detection System} (HIDS), d'un collecteur de
+journaux et d'un moteur de règles de corrélation. Son architecture repose
+sur trois composants principaux~:
+
+\begin{itemize}
+  \item le \textbf{Wazuh Manager}, qui reçoit les événements des agents,
+        applique les règles de détection et gère la configuration~;
+  \item le \textbf{Wazuh Indexer}, un moteur de recherche et d'indexation
+        basé sur \textbf{OpenSearch} \cite{opensearch_docs} (un projet dérivé
+        d'Elasticsearch), qui stocke les alertes et permet leur recherche
+        performante~;
+  \item le \textbf{Wazuh Dashboard}, une interface web de visualisation.
+\end{itemize}
+
+Ce projet s'appuie exclusivement sur le \textbf{Wazuh Indexer} comme source
+de données~: les alertes y sont interrogées via son API REST compatible
+OpenSearch, ce qui découple totalement notre plateforme du Wazuh Manager et
+du Dashboard.
+
+\section{Fatigue d'alerte et automatisation (SOAR)}
+
+La littérature professionnelle en sécurité opérationnelle documente de
+longue date le phénomène de \textit{alert fatigue}~: les enquêtes annuelles
+menées auprès des équipes SOC (par exemple celles du SANS Institute) montrent
+de manière récurrente qu'une fraction importante des alertes générées ne
+sont jamais examinées faute de temps, et qu'une proportion significative des
+alertes traitées s'avèrent être des faux positifs. Ce constat a motivé
+l'émergence de la catégorie des outils \textbf{SOAR}
+(\textit{Security Orchestration, Automation and Response}), dont des
+solutions commerciales comme Splunk SOAR, Microsoft Sentinel ou IBM QRadar
+SOAR sont des représentants connus. Ces outils automatisent des
+\textit{playbooks} — des séquences d'actions prédéfinies (enrichissement,
+notification, blocage) — mais restent généralement limités à des règles
+déterministes~: ils ne \textit{raisonnent} pas sur le contexte d'une alerte
+au sens où le ferait un analyste humain.
+
+\section{Agents fondés sur les grands modèles de langage}
+
+L'émergence des \textbf{grands modèles de langage} (\textit{Large Language
+Models}, LLM) a ouvert la voie à une nouvelle génération d'automatisation,
+fondée non plus sur des règles fixes mais sur un raisonnement itératif en
+langage naturel combiné à l'appel d'outils externes. Deux travaux
+fondateurs éclairent la conception retenue dans ce projet~:
+
+\begin{itemize}
+  \item Wei \textit{et al.} \cite{cot2022} montrent que inciter un modèle à
+        expliciter ses étapes de raisonnement (\textit{chain-of-thought})
+        avant de produire une réponse améliore significativement la qualité
+        de ses conclusions sur des tâches complexes~;
+  \item Yao \textit{et al.} \cite{react2022} proposent le paradigme
+        \textbf{ReAct} (\textit{Reasoning + Acting}), dans lequel un modèle
+        alterne entre raisonnement explicite et appels d'outils externes
+        (recherche d'information, exécution d'actions), le résultat de
+        chaque action venant enrichir le contexte du raisonnement suivant.
+        Ce paradigme correspond très directement à la \textbf{boucle
+        agentique} implémentée par l'\textit{AI Investigator} de ce projet
+        (\cref{chap:implementation})~: le modèle observe une alerte,
+        décide d'appeler un outil (recherche d'alertes corrélées,
+        réputation d'une IP, etc.), lit le résultat, et itère jusqu'à
+        pouvoir formuler un verdict.
+\end{itemize}
+
+Le référentiel \textbf{MITRE ATT\&CK} \cite{mitre_attack}, qui catalogue les
+tactiques et techniques employées par les attaquants, constitue par ailleurs
+une base de connaissance couramment mobilisée — bien qu'elle ne soit pas
+directement intégrée dans la version actuelle du projet — pour qualifier et
+prioriser les verdicts produits par ce type d'agent.
+
+\section{Comparatif des approches existantes}
+
+Le \cref{tab:comparatif} positionne \projectname{} par rapport aux grandes
+catégories d'outils existants.
+
+\begin{table}[H]
+\centering
+\caption{Comparatif entre les approches existantes et \projectname}
+\label{tab:comparatif}
+\begin{tabular}{@{}p{3.4cm}p{3.6cm}p{3.6cm}p{3.6cm}@{}}
+\toprule
+\textbf{Critère} & \textbf{SIEM seul (ex. Wazuh natif)} & \textbf{SOAR à
+playbooks} & \textbf{\projectname} \\
+\midrule
+Détection d'alertes & Oui (règles) & Non (en amont) & S'appuie sur Wazuh \\
+Triage automatique & Non & Oui (déterministe) & Oui (raisonnement IA) \\
+Justification du verdict & Non & Limitée (log d'actions) & Explicite,
+tracée par action \\
+Adaptation à un cas non prévu & Non & Non (règles figées) & Oui
+(raisonnement contextuel) \\
+Interrogation en langage naturel & Non & Non & Oui (assistant
+conversationnel) \\
+Coût / complexité de mise en œuvre & Faible & Élevé (licences) & Faible
+(open source + API/LLM local) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Synthèse et positionnement du projet}
+
+L'état de l'art fait apparaître un espace encore peu occupé par les
+solutions \textbf{open source} entre, d'un côté, les SIEM qui détectent mais
+ne concluent pas, et de l'autre, les SOAR commerciaux, coûteux, dont
+l'automatisation reste déterministe et peu adaptable. \projectname{} se
+positionne précisément dans cet espace~: il conserve Wazuh comme moteur de
+détection éprouvé, et y ajoute une couche de raisonnement fondée sur un
+agent LLM inspiré du paradigme ReAct, avec une exigence forte de
+\textbf{traçabilité} (chaque action de l'agent est enregistrée) et de
+\textbf{sobriété} des accès aux données (l'agent n'a, par construction,
+aucun accès aux données d'identité des utilisateurs — voir
+\cref{chap:conception}).

@@ -1,0 +1,118 @@
+\appendix
+\chapter{Annexes}
+
+\section{Structure du dépôt de code}
+
+\begin{lstlisting}[language={}, caption={Arborescence simplifiée du projet}]
+alert_receiver.py          Client Wazuh Indexer (recherche/lecture d'alertes)
+poller_service.py          Boucle de collecte periodique, watermark
+investigation_policy.py    Moteur de politiques (quelles alertes ouvrir)
+investigation_manager.py   Creation des investigations, liaison des actifs
+database.py                Schema MySQL (DDL + migrations) + acces donnees
+
+ai_investigator/
+  investigator.py          Boucle agentique (agent d'investigation)
+  chatbot.py                Assistant conversationnel (memes outils)
+  llm/                      Interface LLMProvider (API / local)
+  tools/                    Outils Wazuh + base de donnees + renseignement
+
+api/
+  main.py                   Application FastAPI, cycle de vie, routes
+  dependencies.py            Cablage des services (DB, poller, IA, LLM)
+  auth.py                    Verification des identifiants + JWT
+  routers/                   auth, investigations, policies, assets,
+                              users, system (poller), chat
+
+frontend/
+  src/views/                Tableau de bord, Investigations, Actifs,
+                              Politiques, Parametres, Chat, Connexion
+  src/stores/                Etat Pinia (investigations, chat, auth)
+  src/api/                   Client HTTP + modules par ressource
+\end{lstlisting}
+
+\section{Extrait du schéma de la table \texttt{investigations}}
+
+\begin{lstlisting}[language=SQL, caption={Extrait de définition de la table
+\texttt{investigations}}]
+CREATE TABLE IF NOT EXISTS investigations (
+    id          CHAR(36)     PRIMARY KEY,
+    alert_id    VARCHAR(255) NOT NULL,
+    asset_id    CHAR(36),
+    policy_id   CHAR(36),
+    title       VARCHAR(255),
+    description TEXT,
+    status      VARCHAR(20)  NOT NULL DEFAULT 'QUEUED',
+    severity    VARCHAR(20),
+    closed_at   DATETIME,
+    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (asset_id)  REFERENCES assets(id),
+    FOREIGN KEY (policy_id) REFERENCES investigation_policies(id)
+);
+\end{lstlisting}
+
+\section{Extrait de l'invite système de l'agent d'investigation}
+
+\begin{lstlisting}[language={}, caption={Extrait du \textit{system prompt}
+de l'AI Investigator}]
+You are an expert AI security analyst working on a Security
+Investigation Platform.
+
+Task: investigate a security alert and determine TRUE POSITIVE,
+FALSE POSITIVE, or NEEDS REVIEW.
+
+## Process
+1. Read the triggering alert AND the baseline context below it
+   (asset record + recent alert history for the same agent).
+2. Only call tools for what's still missing.
+3. Correlate the evidence, then give your verdict.
+
+## Be efficient - budget matters as much as accuracy
+- Reach a verdict in 2-4 tool calls for most alerts.
+- Duplicate calls (same tool + same arguments) are blocked.
+- ...
+\end{lstlisting}
+
+\section{Variables de configuration principales (\texttt{.env})}
+
+\begin{table}[H]
+\centering
+\caption{Principales variables d'environnement}
+\begin{tabular}{@{}p{5.5cm}p{8cm}@{}}
+\toprule
+\textbf{Variable} & \textbf{Rôle} \\
+\midrule
+\texttt{WAZUH\_INDEXER\_HOST/PORT/\allowbreak USERNAME/PASSWORD} & Connexion
+au Wazuh Indexer (compte de service applicatif) \\
+\texttt{MYSQL\_HOST/PORT/USER/\allowbreak PASSWORD/DATABASE} & Connexion à
+la base applicative \\
+\texttt{LLM\_PROVIDER} & \texttt{local} (Ollama) ou \texttt{api} (tout
+point de terminaison compatible OpenAI) \\
+\texttt{LLM\_MODEL}, \texttt{LLM\_API\_KEY} & Modèle utilisé et clé
+d'accès le cas échéant \\
+\texttt{LLM\_MAX\_TOKENS}, \texttt{LLM\_REASONING\_EFFORT} & Bornes de
+génération et effort de raisonnement (selon le modèle) \\
+\texttt{ABUSEIPDB\_API\_KEY} & Active l'outil \texttt{check\_ip\_reputation}
+si renseignée \\
+\texttt{AUTH\_JWT\_SECRET}, \texttt{AUTH\_TOKEN\_TTL\_MINUTES} & Signature
+et durée de vie des jetons de session \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Glossaire complémentaire}
+
+\begin{description}[leftmargin=3.4cm]
+  \item[Agent (Wazuh)] Logiciel installé sur un hôte surveillé, chargé de
+    collecter les événements et de les transmettre au Wazuh Manager.
+  \item[Alerte] Événement de sécurité généré lorsqu'une règle de détection
+    est déclenchée par un événement collecté.
+  \item[Boucle agentique] Cycle itératif dans lequel un modèle de langage
+    alterne raisonnement et appels d'outils jusqu'à produire une conclusion.
+  \item[Faux positif] Alerte ne correspondant à aucune menace réelle.
+  \item[Verdict] Conclusion produite par l'agent d'investigation
+    (\texttt{TRUE\_POSITIVE}, \texttt{FALSE\_POSITIVE},
+    \texttt{NEEDS\_REVIEW}), avec un niveau de confiance et une
+    justification.
+\end{description}

@@ -1,0 +1,385 @@
+\chapter{Conception}
+\label{chap:conception}
+
+\section{Architecture globale du système}
+
+La \cref{fig:architecture} présente l'architecture générale de
+\projectname. Le \textbf{Poller Service} interroge périodiquement le Wazuh
+Indexer pour récupérer les nouvelles alertes~; chaque alerte est évaluée par
+le \textbf{Policy Engine}, qui décide si elle mérite l'ouverture d'une
+investigation. Le cas échéant, l'\textbf{Investigation Manager} crée
+l'investigation (et associe/crée automatiquement l'actif concerné), puis la
+confie à l'\textbf{AI Investigator}, qui exécute sa boucle agentique en
+dialoguant avec un fournisseur de LLM et en appelant les outils nécessaires.
+Toutes les actions, preuves et le verdict final sont enregistrés en base
+MySQL. L'\textbf{API FastAPI} expose l'ensemble (investigations, politiques,
+actifs, assistant conversationnel, authentification) au \textbf{tableau de
+bord Vue.js}.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+    box/.style={draw, rounded corners, fill=brandlight, minimum width=3.4cm,
+                minimum height=1cm, align=center, font=\small},
+    llmbox/.style={draw, rounded corners, fill=orange!15, minimum width=2.8cm,
+                minimum height=1cm, align=center, font=\small},
+    dbbox/.style={draw, rounded corners, fill=green!10, minimum width=2.8cm,
+                minimum height=1cm, align=center, font=\small},
+    arr/.style={-Stealth, thick},
+    node distance=0.9cm and 1.1cm
+]
+\node[box] (indexer) {Wazuh Indexer\\ (OpenSearch)};
+\node[box, below=of indexer] (poller) {Poller Service};
+\node[box, below=of poller] (policy) {Policy Engine};
+\node[box, below=of policy] (manager) {Investigation\\Manager};
+\node[box, below=of manager] (investigator) {AI Investigator\\(boucle agentique)};
+\node[llmbox, right=of investigator] (llm) {Fournisseur LLM\\(API ou local)};
+\node[box, below=of investigator] (chatbot) {Assistant\\conversationnel};
+\node[dbbox, left=2.8cm of investigator] (mysql) {Base MySQL};
+\node[box, right=2.6cm of manager] (api) {API FastAPI};
+\node[box, right=of api] (frontend) {Tableau de bord\\Vue.js};
+\node[box, above=of api, fill=red!10] (auth) {Authentification\\(JWT)};
+
+\draw[arr] (indexer) -- (poller);
+\draw[arr] (poller) -- (policy);
+\draw[arr] (policy) -- (manager);
+\draw[arr] (manager) -- (investigator);
+\draw[arr] (investigator) -- (llm);
+\draw[arr] (llm) -- (investigator);
+\draw[arr] (investigator) -- (chatbot);
+\draw[arr] (chatbot) -- (llm.south);
+\draw[arr] (investigator.west) -- (mysql.east);
+\draw[arr] (manager.west) -| (mysql.north);
+\draw[arr] (chatbot.west) -| (mysql.south);
+\draw[arr] (api) edge[bend left=15] (frontend)
+           (frontend) edge[bend left=15] (api);
+\draw[arr] (mysql.north) |- ($(api.west)+(0,-0.35)$);
+\draw[arr] (auth) -- (api);
+\draw[arr] (indexer) -- (auth.north -| indexer);
+\end{tikzpicture}}
+\caption{Architecture globale de \projectname}
+\label{fig:architecture}
+\end{figure}
+
+\section{Diagramme de cas d'utilisation}
+
+Le \cref{fig:usecase} identifie les trois acteurs du système~: l'
+\textbf{Analyste} (utilisateur humain authentifié), le \textbf{Poller}
+(déclencheur automatique périodique), et l'\textbf{Agent IA} (exécuté en
+tâche de fond pour le compte du système).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    actor/.style={draw, minimum width=1.6cm, font=\small, align=center},
+    usecase/.style={draw, ellipse, fill=brandlight, minimum width=3.6cm,
+                     minimum height=1cm, align=center, font=\small},
+    arr/.style={-, thick}
+]
+\node[actor] (analyst) at (0,0) {\Large$\bigcirc$\\[-2pt]Analyste};
+\node[actor] (poller) at (0,-9) {\Large$\bigcirc$\\[-2pt]Poller};
+\node[actor] (ia) at (13,-4.5) {\Large$\bigcirc$\\[-2pt]Agent IA};
+
+\node[usecase] (login)      at (4.5, 1.5)  {Se connecter\\(comptes Wazuh)};
+\node[usecase] (dashboard)  at (4.5, 0)    {Consulter le\\tableau de bord};
+\node[usecase] (detail)     at (4.5,-1.5)  {Consulter le détail\\d'une investigation};
+\node[usecase] (manual)     at (4.5,-3)    {Déclencher une\\investigation manuelle};
+\node[usecase] (chat)       at (4.5,-4.5)  {Discuter avec\\l'assistant IA};
+\node[usecase] (policies)   at (4.5,-6)    {Gérer les politiques\\d'investigation};
+\node[usecase] (assets)     at (4.5,-7.5)  {Gérer les actifs};
+\node[usecase] (poll)       at (9, -9)     {Collecter les\\alertes Wazuh};
+\node[usecase] (evaluate)   at (9, -10.5)  {Évaluer une alerte\\selon les politiques};
+\node[usecase] (investigate) at (9, -4.5)  {Investiguer une\\alerte (boucle agentique)};
+\node[usecase] (tools)      at (13.2,-2.5) {Appeler un outil\\(recherche, réputation IP...)};
+\node[usecase] (verdict)    at (13.2,-6.5) {Produire un\\verdict argumenté};
+
+\draw[arr] (analyst) -- (login);
+\draw[arr] (analyst) -- (dashboard);
+\draw[arr] (analyst) -- (detail);
+\draw[arr] (analyst) -- (manual);
+\draw[arr] (analyst) -- (chat);
+\draw[arr] (analyst) -- (policies);
+\draw[arr] (analyst) -- (assets);
+\draw[arr] (poller) -- (poll);
+\draw[arr] (poller) -- (evaluate);
+\draw[arr] (evaluate) -- (manual);
+\draw[arr] (ia) -- (investigate);
+\draw[arr] (ia) -- (tools);
+\draw[arr] (ia) -- (verdict);
+\draw[arr] (ia) -- (chat);
+\draw[arr, dashed] (manual) -- (investigate) node[midway, above, sloped, font=\tiny] {\guillemotleft include\guillemotright};
+\end{tikzpicture}
+\caption{Diagramme de cas d'utilisation}
+\label{fig:usecase}
+\end{figure}
+
+\section{Diagramme de classes}
+
+Le \cref{fig:classdiag} présente un extrait représentatif du modèle de
+classes~: la hiérarchie des \texttt{Tool} (chaque outil que l'IA peut
+appeler), la hiérarchie des \texttt{LLMProvider} (abstraction indépendante
+du fournisseur de modèle), et leur utilisation par les deux points d'entrée
+de raisonnement, \texttt{AIInvestigator} et \texttt{SecurityChatbot}.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}
+
+\begin{abstractclass}[text width=6.2cm]{Tool}{0,11}
+  \operation{+ name() : str}
+  \operation{+ description() : str}
+  \operation{+ parameters() : dict}
+  \operation{+ execute(**kwargs) : Any}
+  \operation{+ coerce\_arguments(args : dict) : dict}
+\end{abstractclass}
+
+{\scriptsize
+\begin{class}[text width=3.2cm]{SearchAlertsTool}{-9.6,4.5}
+\end{class}
+\inherit{Tool}
+
+\begin{class}[text width=3.2cm]{CountAlertsTool}{-5.6,4.5}
+\end{class}
+\inherit{Tool}
+
+\begin{class}[text width=3.2cm]{CheckIPReputationTool}{-1.6,4.5}
+\end{class}
+\inherit{Tool}
+
+\begin{class}[text width=3.2cm]{SearchInvestigationsTool}{2.4,4.5}
+\end{class}
+\inherit{Tool}
+
+\begin{class}[text width=3.2cm]{SearchAssetsTool}{6.4,4.5}
+\end{class}
+\inherit{Tool}
+}
+
+\begin{abstractclass}[text width=5.4cm]{LLMProvider}{15,11}
+  \operation{+ chat(messages, tools, tool\_choice) : LLMResponse}
+\end{abstractclass}
+
+\begin{class}[text width=3.6cm]{APIProvider}{13,4.5}
+\end{class}
+\inherit{LLMProvider}
+
+\begin{class}[text width=3.6cm]{LocalProvider}{17,4.5}
+\end{class}
+\inherit{LLMProvider}
+
+\begin{class}[text width=5.6cm]{AIInvestigator}{2,-1}
+  \operation{+ investigate(alert\_data) : dict}
+  \operation{- \_run\_loop(...) : dict}
+\end{class}
+
+\begin{class}[text width=5.6cm]{SecurityChatbot}{13,-1}
+  \operation{+ send\_message(session\_id, text) : dict}
+  \operation{+ create\_session() : dict}
+\end{class}
+
+\unidirectionalAssociation{AIInvestigator}{uses}{1}{LLMProvider}
+\unidirectionalAssociation{AIInvestigator}{uses}{*}{Tool}
+\unidirectionalAssociation{SecurityChatbot}{uses}{1}{LLMProvider}
+\unidirectionalAssociation{SecurityChatbot}{uses}{*}{Tool}
+
+\end{tikzpicture}}
+\caption{Diagramme de classes (extrait représentatif)}
+\label{fig:classdiag}
+\end{figure}
+
+\section{Diagrammes de séquence}
+
+\subsection{Investigation automatique d'une alerte}
+
+Le \cref{fig:seq1} illustre le déroulement d'une investigation déclenchée
+automatiquement par le \textit{Poller Service}, jusqu'à l'obtention d'un
+verdict par la boucle agentique.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{sequencediagram}
+  \newthread{poller}{:PollerService}
+  \newinst[2]{policy}{:PolicyEngine}
+  \newinst[2]{manager}{:InvestigationManager}
+  \newinst[2]{investigator}{:AIInvestigator}
+  \newinst[2]{llm}{:LLMProvider}
+  \newinst[2]{tool}{:Tool}
+  \newinst[2]{db}{:MySQL}
+
+  \begin{call}{poller}{get\_alerts()}{policy}{alertes}
+  \end{call}
+  \begin{call}{poller}{evaluate(alerte)}{policy}{decision}
+  \end{call}
+  \begin{sdblock}{alt}{si decision = ouvrir investigation}
+    \begin{call}{poller}{create\_investigation(alerte)}{manager}{investigation}
+    \end{call}
+    \begin{call}{manager}{investigate(investigation)}{investigator}{}
+    \end{call}
+    \begin{sdblock}{loop}{tant que verdict non atteint (max N étapes)}
+      \begin{call}{investigator}{chat(messages, tools)}{llm}{tool\_calls}
+      \end{call}
+      \begin{call}{investigator}{execute(args)}{tool}{résultat}
+      \end{call}
+      \begin{call}{investigator}{store\_evidence(résultat)}{db}{}
+      \end{call}
+    \end{sdblock}
+    \begin{call}{investigator}{chat(messages, tool\_choice=none)}{llm}{verdict}
+    \end{call}
+    \begin{call}{investigator}{store\_analysis(verdict)}{db}{}
+    \end{call}
+  \end{sdblock}
+\end{sequencediagram}}
+\caption{Séquence -- investigation automatique d'une alerte}
+\label{fig:seq1}
+\end{figure}
+
+\subsection{Authentification d'un utilisateur}
+
+Le \cref{fig:seq2} illustre le mécanisme d'authentification, fondé sur une
+délégation de la vérification des identifiants au Wazuh Indexer plutôt que
+sur une base de mots de passe propre à l'application (voir
+\cref{sec:securite_conception}).
+
+\begin{figure}[H]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{sequencediagram}
+  \newthread{user}{:Analyste}
+  \newinst[2]{front}{:Frontend (Vue)}
+  \newinst[2]{api}{:API (/auth/login)}
+  \newinst[2]{indexer}{:Wazuh Indexer}
+  \newinst[2]{db}{:MySQL (users)}
+
+  \begin{call}{user}{saisir identifiants}{front}{}
+  \end{call}
+  \begin{call}{front}{POST /auth/login}{api}{}
+  \end{call}
+  \begin{call}{api}{GET / (Basic Auth)}{indexer}{200 ou 401}
+  \end{call}
+  \begin{sdblock}{alt}{si 200 (identifiants valides)}
+    \begin{call}{api}{SELECT/INSERT user}{db}{utilisateur}
+    \end{call}
+    \begin{callself}{api}{create\_access\_token()}{JWT}
+    \end{callself}
+    \begin{callself}{api}{réponse : JWT + profil}{}
+    \end{callself}
+  \end{sdblock}
+  \begin{sdblock}{alt}{si 401 (identifiants invalides)}
+    \begin{callself}{api}{réponse : 401 Unauthorized}{}
+    \end{callself}
+  \end{sdblock}
+  \begin{call}{front}{requêtes suivantes (Bearer JWT)}{api}{}
+  \end{call}
+\end{sequencediagram}}
+\caption{Séquence -- authentification d'un utilisateur}
+\label{fig:seq2}
+\end{figure}
+
+\section{Modèle de données}
+
+Le \cref{fig:erd} présente le modèle entité-association simplifié de la
+base MySQL de la plateforme.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+    entity/.style={draw, rounded corners, fill=brandlight, align=left,
+                   font=\scriptsize, inner sep=6pt},
+    rel/.style={-Stealth, thick},
+    every node/.style={font=\scriptsize}
+]
+\node[entity] (users) at (0,8) {\textbf{users}\\id (PK)\\username\\email\\role\\is\_active};
+\node[entity] (assets) at (7,8) {\textbf{assets}\\id (PK)\\hostname\\ip\_address\\wazuh\_agent\_id\\criticality};
+\node[entity] (policies) at (14,8) {\textbf{investigation\_policies}\\id (PK)\\nom, condition, sévérité};
+
+\node[entity] (inv) at (7,4) {\textbf{investigations}\\id (PK)\\alert\_id\\asset\_id (FK)\\policy\_id (FK)\\status, severity};
+
+\node[entity] (evidence) at (0,0) {\textbf{investigation\_evidence}\\id (PK)\\investigation\_id (FK)\\source\_type, data};
+\node[entity] (analysis) at (7,0) {\textbf{investigation\_analysis}\\id (PK)\\investigation\_id (FK)\\verdict, confidence};
+\node[entity] (actions) at (14,0) {\textbf{investigation\_actions}\\id (PK)\\investigation\_id (FK)\\tool, reasoning, result};
+
+\node[entity] (sessions) at (0,4) {\textbf{chat\_sessions}\\id (PK)\\title};
+\node[entity] (messages) at (-6,0) {\textbf{chat\_messages}\\id (PK)\\session\_id (FK)\\role, content};
+
+\draw[rel] (assets) -- node[above]{1} node[below]{1..*} (inv);
+\draw[rel] (policies) -- node[above]{1} node[below]{0..*} (inv);
+\draw[rel] (inv) -- node[left]{1} node[right]{0..*} (evidence);
+\draw[rel] (inv) -- node[above]{1} node[below]{0..*} (analysis);
+\draw[rel] (inv) -- node[left]{1} node[right]{0..*} (actions);
+\draw[rel] (sessions) -- node[left]{1} node[right]{0..*} (messages);
+\draw[rel, dashed] (users) -- node[above, sloped]{aucune table IA ne référence users} (0,4.9);
+\end{tikzpicture}}
+\caption{Modèle de données simplifié (MySQL)}
+\label{fig:erd}
+\end{figure}
+
+\noindent\textit{Remarque de conception importante~:} la table
+\texttt{users} n'est \textbf{jamais} interrogée par les outils exposés à
+l'IA (ni pour l'agent d'investigation, ni pour l'assistant conversationnel).
+Cette exclusion n'est pas un filtre applicatif contournable~: il n'existe
+tout simplement \textbf{aucune classe \texttt{Tool}} permettant de lire
+cette table (voir \cref{sec:securite_conception}).
+
+\section{Choix technologiques}
+
+Le \cref{tab:techstack} justifie les principaux choix technologiques.
+
+\begin{table}[H]
+\centering
+\caption{Choix technologiques et justifications}
+\label{tab:techstack}
+\begin{tabular}{@{}p{3cm}p{3.6cm}p{7cm}@{}}
+\toprule
+\textbf{Couche} & \textbf{Technologie} & \textbf{Justification} \\
+\midrule
+Backend & Python, FastAPI & Typage, performance asynchrone, génération
+automatique de documentation OpenAPI (\texttt{/docs}) \\
+Accès données & SQLAlchemy / PyMySQL & Requêtes SQL explicites,
+contrôle fin adapté à un schéma relatif ement simple \\
+Base applicative & MySQL & Fiabilité, transactions ACID, disponibilité
+large \\
+Source d'alertes & Wazuh Indexer (OpenSearch), \texttt{opensearch-py} &
+Réutilisation du moteur de recherche déjà déployé avec Wazuh \\
+IA / LLM & Interface \texttt{LLMProvider} abstraite (implémentations
+API compatible OpenAI et Ollama local) & Portabilité entre fournisseurs
+distants (Groq, OpenAI...) et modèle auto-hébergé, sans changement de
+code métier \\
+Authentification & JWT + délégation au Wazuh Indexer & Évite la
+duplication d'une base de mots de passe (\cref{sec:securite_conception}) \\
+Frontend & Vue 3 (Composition API), Pinia, Vue Router, Tailwind CSS,
+Vite & Écosystème léger, réactivité, rapidité de développement \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Sécurité de la conception}
+\label{sec:securite_conception}
+
+Deux décisions de conception structurent la sécurité de la plateforme~:
+
+\begin{enumerate}
+  \item \textbf{Aucune base de mots de passe propre à l'application.}
+        L'authentification (\cref{fig:seq2}) délègue la vérification des
+        identifiants au Wazuh Indexer~: le mot de passe saisi n'est
+        transmis qu'une seule fois, pour cette vérification, et n'est
+        jamais stocké. Un jeton \textbf{JWT} signé, à durée de vie limitée,
+        est ensuite émis par l'application pour authentifier les requêtes
+        suivantes.
+  \item \textbf{Exclusion structurelle des données d'identité pour l'IA.}
+        Aucun outil (\texttt{Tool}) exposé à l'agent d'investigation ou à
+        l'assistant conversationnel ne permet d'interroger la table
+        \texttt{users}. Il ne s'agit pas d'un filtrage de requête, mais
+        d'une absence totale de chemin d'accès~: quelle que soit la
+        formulation de la demande d'un utilisateur au chatbot, aucun outil
+        disponible ne peut retourner de données d'identité.
+\end{enumerate}
+
+Par ailleurs, la boucle agentique elle-même intègre plusieurs
+\textit{garde-fous} destinés à borner son comportement (nombre maximal
+d'étapes, taille maximale du contexte renvoyé au modèle, détection des
+appels d'outils dupliqués, délais d'expiration réseau) — ces mécanismes sont
+détaillés au \cref{chap:implementation}.

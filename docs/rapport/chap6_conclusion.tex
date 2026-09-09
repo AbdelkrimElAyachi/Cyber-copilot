@@ -1,0 +1,81 @@
+\chapter{Conclusion générale et perspectives}
+\label{chap:conclusion}
+
+\section{Synthèse du travail réalisé}
+
+Ce projet a permis de concevoir et développer \projectname, une plateforme
+qui étend une installation Wazuh existante d'une couche d'investigation
+automatisée fondée sur un agent d'intelligence artificielle. Le travail
+réalisé couvre l'ensemble de la chaîne~: collecte périodique des alertes,
+moteur de politiques configurable, boucle agentique de raisonnement outillé
+inspirée du paradigme ReAct \cite{react2022}, traçabilité complète des
+actions de l'IA, assistant conversationnel partageant les mêmes outils,
+enrichissement par une source de renseignement externe (réputation d'IP),
+et authentification déléguée aux comptes Wazuh existants. L'ensemble a été
+validé fonctionnellement contre des services réels tout au long du
+développement (\cref{chap:resultats}).
+
+\section{Difficultés rencontrées}
+
+Plusieurs difficultés ont jalonné le développement, et ont chacune donné
+lieu à une évolution de conception~:
+
+\begin{itemize}
+  \item les quotas de débit (\textit{tokens per minute}) imposés par le
+        fournisseur de LLM utilisé en développement se sont révélés plus
+        contraignants que prévu, obligeant à réduire la taille du contexte
+        transmis à chaque appel (invite système, contexte de référence,
+        résultats d'outils) sans dégrader la qualité du raisonnement~;
+  \item certains modèles ont ponctuellement tenté d'appeler un outil alors
+        qu'il leur était explicitement demandé de conclure
+        (\texttt{tool\_choice="none"}), ce qui a nécessité la détection et
+        la gestion explicite de ce cas plutôt que de le traiter comme une
+        erreur fatale~;
+  \item les arguments transmis par le modèle lors d'un appel d'outil ne
+        respectent pas toujours strictement le type attendu (un nombre
+        transmis sous forme de texte), ce qui a conduit à une normalisation
+        systématique des arguments avant exécution (\cref{lst:coerce})~;
+  \item la conception d'un mécanisme d'authentification sans dupliquer la
+        base de comptes existante a demandé une réflexion spécifique,
+        résolue par la délégation de la vérification au Wazuh Indexer.
+\end{itemize}
+
+Ces difficultés, bien que ponctuellement contraignantes, ont eu un effet
+positif sur la robustesse finale du système~: chacune a été traitée comme
+un cas à absorber structurellement plutôt que comme une exception isolée.
+
+\section{Perspectives}
+
+Plusieurs axes d'évolution ont été identifiés pour la suite du projet~:
+
+\begin{itemize}
+  \item \textbf{Gestion fine des permissions}~: exploiter le champ de rôle
+        déjà présent sur les utilisateurs pour restreindre certaines
+        actions (par exemple la gestion des politiques) aux seuls profils
+        autorisés~;
+  \item \textbf{Migration vers un modèle de langage auto-hébergé}~:
+        l'abstraction \texttt{LLMProvider} a précisément été conçue pour
+        permettre cette transition sans modification de la logique
+        métier, afin de s'affranchir des contraintes de quota et de coût
+        d'une API distante~;
+  \item \textbf{Élargissement des sources de données}~: intégration
+        d'autres capteurs (Suricata pour la détection réseau, journaux
+        \textit{cloud} de type CloudTrail) sous forme de nouveaux outils,
+        sans remise en cause de l'architecture~;
+  \item \textbf{Enrichissement par RAG}~: adossement de l'agent à une base
+        de connaissances de menaces (par exemple structurée autour du
+        référentiel MITRE ATT\&CK \cite{mitre_attack}) pour améliorer la
+        qualification des verdicts~;
+  \item \textbf{Suite de tests automatisés}~: couverture unitaire des
+        outils et de la boucle agentique, et tests d'intégration de l'API,
+        pour sécuriser les évolutions futures~;
+  \item \textbf{Possibilité d'annuler une investigation en cours}, et
+        \textbf{tableaux de bord analytiques} (tendances de charge
+        d'alertes, taux de faux positifs observé dans le temps).
+\end{itemize}
+
+En définitive, ce projet démontre la faisabilité d'une automatisation du
+triage d'alertes de sécurité par un agent fondé sur un modèle de langage,
+tout en conservant l'exigence de traçabilité et de sobriété d'accès aux
+données propre à un contexte de cybersécurité — les deux axes qui ont guidé
+l'ensemble des choix de conception présentés dans ce rapport.

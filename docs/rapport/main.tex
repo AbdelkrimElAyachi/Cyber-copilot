@@ -1,0 +1,53 @@
+\documentclass[12pt,a4paper,openany]{report}
+
+\input{preamble}
+
+% ---- Intitulés en français conformes au plan demandé ----
+\renewcommand{\contentsname}{Sommaire}
+\renewcommand{\listfigurename}{Liste des figures}
+\renewcommand{\listtablename}{Liste des tables}
+\renewcommand{\bibname}{Références}
+
+\begin{document}
+
+% -------------------- Page de garde --------------------
+\input{titlepage}
+\clearpage
+
+% -------------------- Pages liminaires --------------------
+\pagenumbering{roman}
+
+\input{remerciements}
+\clearpage
+\input{dedicaces}
+\clearpage
+
+\listoffigures
+\clearpage
+\listoftables
+\clearpage
+\input{abreviations}
+\clearpage
+
+\tableofcontents
+\clearpage
+
+\pagenumbering{arabic}
+
+% -------------------- Corps du rapport --------------------
+\input{chap1_introduction}
+\input{chap2_etat_de_lart}
+\input{chap3_conception}
+\input{chap4_implementation}
+\input{chap5_resultats}
+\input{chap6_conclusion}
+
+% -------------------- Références --------------------
+% (tocbibind adds this section to the Sommaire automatically)
+\clearpage
+\input{references}
+
+% -------------------- Annexes --------------------
+\input{annexes}
+
+\end{document}
