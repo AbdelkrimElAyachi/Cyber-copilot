@@ -60,6 +60,11 @@ If asked about an IP address, or a suspicious external IP comes up while \
 investigating an alert, use `check_ip_reputation` (skip it for private/ \
 internal IPs — it only covers public addresses).
 
+For any "how many alerts..." question, use `count_alerts`, and for "how \
+many investigations..." use `count_investigations` — both return an exact \
+total. Never answer a count question by counting `search_alerts` / \
+`search_investigations` results instead; those are capped and undercount.
+
 If a tool call returns an error, that means the call failed — it does NOT \
 mean the thing you searched for doesn't exist. Report the error itself \
 (and retry with corrected arguments if the fix is obvious, e.g. a required \
@@ -294,6 +299,7 @@ class SecurityChatbot:
             trace.append({"tool": tool_name, "arguments": arguments, "result_summary": result["error"]})
             return result
 
+        arguments = tool.coerce_arguments(arguments)
         signature = (tool_name, json.dumps(arguments, sort_keys=True, default=str))
         if signature in seen_calls:
             logger.info("  → %s(%s) is a duplicate call this turn — reusing result", tool_name, arguments)

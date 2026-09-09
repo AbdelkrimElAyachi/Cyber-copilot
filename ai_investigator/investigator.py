@@ -535,6 +535,7 @@ class AIInvestigator:
             )
             return {"error": error_msg}
 
+        arguments = tool.coerce_arguments(arguments)
         signature = (tool_name, json.dumps(arguments, sort_keys=True, default=str))
         if seen_calls is not None and signature in seen_calls:
             logger.info("  → %s(%s) is a duplicate of an earlier call this investigation — reusing result", tool_name, arguments)

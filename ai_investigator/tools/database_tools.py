@@ -99,6 +99,74 @@ class SearchInvestigationsTool(Tool):
             return {"error": str(e)}
 
 
+class CountInvestigationsTool(Tool):
+    """Count investigations matching filters, without fetching them.
+
+    ``search_investigations`` caps results (default 10, max 50) and its
+    "count" is just how many of those came back — not the true total. For
+    "how many investigations..." questions, this runs a plain
+    ``COUNT(*)`` instead, which has no result-size cap.
+    """
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    @property
+    def name(self) -> str:
+        return "count_investigations"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Get the exact total number of investigations matching "
+            "optional filters — use this for any 'how many "
+            "investigations...' question instead of counting "
+            "search_investigations results, which are capped and don't "
+            "reflect the true total. Omit all filters to count every "
+            "investigation in the platform."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["QUEUED", "IN_PROGRESS", "COMPLETED", "CLOSED"],
+                    "description": "Filter by investigation status.",
+                },
+                "severity": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Filter by severity.",
+                },
+            },
+            "required": [],
+        }
+
+    def execute(self, **kwargs: Any) -> Any:
+        try:
+            conditions = []
+            params: list[Any] = []
+
+            if kwargs.get("status"):
+                conditions.append("status = %s")
+                params.append(kwargs["status"])
+            if kwargs.get("severity"):
+                conditions.append("severity = %s")
+                params.append(kwargs["severity"])
+
+            where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+            row = self._db.fetchone(
+                f"SELECT COUNT(*) AS count FROM investigations {where}",
+                tuple(params),
+            )
+            return {"count": row["count"] if row else 0}
+        except Exception as e:
+            return {"error": str(e)}
+
+
 class GetInvestigationTool(Tool):
     """Get full details of an investigation."""
 

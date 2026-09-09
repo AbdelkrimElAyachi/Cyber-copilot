@@ -129,6 +129,97 @@ class SearchAlertsTool(Tool):
             return {"error": str(e), "count": 0, "alerts": []}
 
 
+class CountAlertsTool(Tool):
+    """Count Wazuh alerts matching filters, without fetching them.
+
+    ``search_alerts`` caps results at 50 and its "count" is just how many
+    of those it returned — not the true total. For "how many alerts..."
+    questions, this calls the Indexer's own count API instead, which is
+    exact and isn't limited by any result-size cap.
+    """
+
+    def __init__(self, receiver: AlertReceiver) -> None:
+        self._receiver = receiver
+
+    @property
+    def name(self) -> str:
+        return "count_alerts"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Get the exact total number of Wazuh alerts matching optional "
+            "filters — use this for any 'how many alerts...' question "
+            "instead of counting search_alerts results, which are capped "
+            "at 50 and don't reflect the true total. Omit all filters to "
+            "count every alert in the index."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Free-text search across alert logs.",
+                },
+                "agent_id": {
+                    "type": "string",
+                    "description": "Wazuh agent ID (e.g. '001').",
+                },
+                "agent_name": {
+                    "type": "string",
+                    "description": "Agent hostname.",
+                },
+                "rule_id": {
+                    "type": "string",
+                    "description": "Wazuh rule ID (e.g. '5710').",
+                },
+                "rule_level_min": {
+                    "type": "integer",
+                    "description": "Minimum rule level (1-16).",
+                },
+                "source_ip": {
+                    "type": "string",
+                    "description": "Source IP address.",
+                },
+                "time_from": {
+                    "type": "string",
+                    "description": "Start time in ISO format (e.g. '2026-08-20T00:00:00').",
+                },
+                "time_to": {
+                    "type": "string",
+                    "description": "End time in ISO format.",
+                },
+            },
+            "required": [],
+        }
+
+    def execute(self, **kwargs: Any) -> Any:
+        try:
+            from_time = None
+            to_time = None
+            if kwargs.get("time_from"):
+                from_time = datetime.fromisoformat(kwargs["time_from"])
+            if kwargs.get("time_to"):
+                to_time = datetime.fromisoformat(kwargs["time_to"])
+
+            total = self._receiver.count_alerts(
+                search_text=kwargs.get("query"),
+                agent_id=kwargs.get("agent_id"),
+                agent_name=kwargs.get("agent_name"),
+                rule_id=kwargs.get("rule_id"),
+                min_level=kwargs.get("rule_level_min"),
+                source_ip=kwargs.get("source_ip"),
+                from_time=from_time,
+                to_time=to_time,
+            )
+            return {"count": total}
+        except Exception as e:
+            return {"error": str(e)}
+
+
 class GetAlertDetailsTool(Tool):
     """Get full details of a specific Wazuh alert."""
 

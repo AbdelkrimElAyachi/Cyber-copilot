@@ -6,9 +6,10 @@ import os
 from typing import Optional, TYPE_CHECKING
 
 from .base import Tool
-from .wazuh_tools import SearchAlertsTool, GetAlertDetailsTool
+from .wazuh_tools import SearchAlertsTool, CountAlertsTool, GetAlertDetailsTool
 from .database_tools import (
     SearchInvestigationsTool,
+    CountInvestigationsTool,
     GetInvestigationTool,
     GetInvestigationEvidenceTool,
     GetInvestigationAnalysisTool,
@@ -24,8 +25,10 @@ if TYPE_CHECKING:
 __all__ = [
     "Tool",
     "SearchAlertsTool",
+    "CountAlertsTool",
     "GetAlertDetailsTool",
     "SearchInvestigationsTool",
+    "CountInvestigationsTool",
     "GetInvestigationTool",
     "GetInvestigationEvidenceTool",
     "GetInvestigationAnalysisTool",
@@ -51,10 +54,12 @@ def build_default_tools(
     # Wazuh tools need a live receiver; unavailable if Wazuh isn't reachable.
     if alert_receiver is not None:
         tools["search_alerts"] = SearchAlertsTool(alert_receiver)
+        tools["count_alerts"] = CountAlertsTool(alert_receiver)
         tools["get_alert_details"] = GetAlertDetailsTool(alert_receiver)
 
     # Platform database tools (investigations, evidence, analysis, assets).
     tools["search_investigations"] = SearchInvestigationsTool(db)
+    tools["count_investigations"] = CountInvestigationsTool(db)
     tools["get_investigation"] = GetInvestigationTool(db)
     tools["get_investigation_evidence"] = GetInvestigationEvidenceTool(db)
     tools["get_investigation_analysis"] = GetInvestigationAnalysisTool(db)
