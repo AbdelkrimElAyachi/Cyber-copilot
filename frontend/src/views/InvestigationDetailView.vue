@@ -5,6 +5,7 @@ import { useInvestigationsStore } from '../stores/investigations.js'
 import SeverityBadge from '../components/common/SeverityBadge.vue'
 import StatusBadge from '../components/common/StatusBadge.vue'
 import LoadingSpinner from '../components/common/LoadingSpinner.vue'
+import { renderMarkdown } from '../utils/markdown.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -65,40 +66,6 @@ function formatJson(data) {
   }
 }
 
-// Simple markdown-like renderer
-function renderContent(text) {
-  if (!text) return ''
-  return text
-    .split('\n')
-    .map(line => {
-      // Headers
-      if (line.startsWith('## ')) {
-        return `<h3 class="text-base font-semibold text-surface-100 mt-4 mb-2">${line.slice(3)}</h3>`
-      }
-      if (line.startsWith('# ')) {
-        return `<h2 class="text-lg font-bold text-surface-100 mt-4 mb-2">${line.slice(2)}</h2>`
-      }
-      // Bold
-      line = line.replace(/\*\*(.+?)\*\*/g, '<strong class="text-surface-100 font-semibold">$1</strong>')
-      // Inline code
-      line = line.replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 bg-surface-800 rounded text-accent text-xs font-mono">$1</code>')
-      // Bullet points
-      if (line.startsWith('- ')) {
-        return `<li class="ml-4 text-sm text-surface-300 leading-relaxed">${line.slice(2)}</li>`
-      }
-      // Numbered list
-      const numMatch = line.match(/^(\d+)\. (.+)/)
-      if (numMatch) {
-        return `<li class="ml-4 text-sm text-surface-300 leading-relaxed"><span class="text-surface-500 mr-1">${numMatch[1]}.</span>${numMatch[2]}</li>`
-      }
-      // Empty line
-      if (line.trim() === '') return '<br>'
-      // Regular paragraph
-      return `<p class="text-sm text-surface-300 leading-relaxed">${line}</p>`
-    })
-    .join('\n')
-}
-
 // Timeline: merge evidence, analysis, actions into sorted list
 const timeline = computed(() => {
   const items = []
@@ -152,6 +119,20 @@ async function updateStatus(newStatus) {
 const starting = ref(false)
 const investigateError = ref('')
 
+// Newest analysis first — used to tell a genuinely failed run (verdict
+// ERROR, or the investigation somehow never got one at all) from a normal
+// completed one, so the retry affordance can be worded appropriately.
+const latestAnalysis = computed(() => {
+  if (!analysis.value.length) return null
+  return [...analysis.value].sort(
+    (a, b) => new Date(b.created_at) - new Date(a.created_at)
+  )[0]
+})
+const investigationFailed = computed(() =>
+  investigation.value?.status === 'COMPLETED' &&
+  latestAnalysis.value?.verdict === 'ERROR'
+)
+
 async function startInvestigation() {
   starting.value = true
   investigateError.value = ''
@@ -162,6 +143,18 @@ async function startInvestigation() {
   } finally {
     starting.value = false
   }
+}
+
+async function retryInvestigation() {
+  // Re-running an already-completed investigation adds a new analysis
+  // rather than replacing the old one (evidence/actions/analysis are kept
+  // as history — see investigator.py) — worth a confirmation so it isn't
+  // triggered by a stray click, except when the prior run simply failed.
+  if (!investigationFailed.value && !confirm(
+    'Re-run the AI investigation? The previous analysis and evidence stay '
+    + 'on record; this adds a new attempt rather than replacing it.'
+  )) return
+  await startInvestigation()
 }
 
 const deleting = ref(false)
@@ -228,13 +221,25 @@ const verdictStyles = {
           >
             🤖 AI investigating…
           </span>
-          <button
-            v-if="investigation.status === 'COMPLETED'"
-            class="btn-secondary text-xs"
-            @click="updateStatus('CLOSED')"
-          >
-            Close Investigation
-          </button>
+          <template v-if="investigation.status === 'COMPLETED'">
+            <span v-if="investigationFailed" class="badge bg-severity-critical/15 text-severity-critical text-xs">
+              ⚠️ Investigation failed
+            </span>
+            <button
+              class="text-xs"
+              :class="investigationFailed ? 'btn-primary' : 'btn-ghost'"
+              :disabled="starting"
+              @click="retryInvestigation"
+            >
+              {{ starting ? 'Starting…' : (investigationFailed ? '🔄 Retry Investigation' : '🔄 Re-run Investigation') }}
+            </button>
+            <button
+              class="btn-secondary text-xs"
+              @click="updateStatus('CLOSED')"
+            >
+              Close Investigation
+            </button>
+          </template>
           <button
             v-if="investigation.status === 'CLOSED'"
             class="btn-ghost text-xs"
@@ -364,7 +369,7 @@ const verdictStyles = {
             </div>
 
             <!-- Content -->
-            <div class="prose-sm" v-html="renderContent(an.content)" />
+            <div class="markdown-content text-sm text-surface-300" v-html="renderMarkdown(an.content)" />
           </div>
         </div>
 

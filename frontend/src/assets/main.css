@@ -107,4 +107,55 @@
   .label {
     @apply block text-sm font-medium text-surface-400 mb-1;
   }
+
+  /* Shared target for sanitized-Markdown content (chat replies, AI
+     analysis) rendered via v-html — see src/utils/markdown.js. Tailwind's
+     preflight strips list/heading/link styling from raw tags, and this
+     markup isn't template-authored so it can't carry utility classes
+     directly; restored here once instead of per component. */
+  .markdown-content :where(p) {
+    @apply my-2 first:mt-0 last:mb-0;
+  }
+  .markdown-content :where(strong) {
+    @apply font-semibold text-inherit;
+  }
+  .markdown-content :where(ul) {
+    @apply list-disc pl-5 my-2;
+  }
+  .markdown-content :where(ol) {
+    @apply list-decimal pl-5 my-2;
+  }
+  .markdown-content :where(li) {
+    @apply my-0.5;
+  }
+  .markdown-content :where(li > p) {
+    @apply my-0 inline;
+  }
+  .markdown-content :where(code) {
+    @apply font-mono text-[0.85em] bg-surface-800 text-accent-light px-1.5 py-0.5 rounded;
+  }
+  .markdown-content :where(pre) {
+    @apply bg-surface-950 border border-surface-700 rounded-md p-3 my-2 overflow-x-auto;
+  }
+  .markdown-content :where(pre code) {
+    @apply bg-transparent p-0;
+  }
+  .markdown-content :where(a) {
+    @apply text-accent-light underline;
+  }
+  .markdown-content :where(blockquote) {
+    @apply border-l-2 border-surface-600 pl-3 my-2 text-surface-400;
+  }
+  .markdown-content :where(h1, h2, h3, h4) {
+    @apply font-semibold text-surface-100 mt-3 mb-1.5;
+  }
+  .markdown-content :where(hr) {
+    @apply border-surface-700 my-3;
+  }
+  .markdown-content :where(table) {
+    @apply border-collapse my-2 text-[0.9em];
+  }
+  .markdown-content :where(th, td) {
+    @apply border border-surface-700 px-2 py-1;
+  }
 }

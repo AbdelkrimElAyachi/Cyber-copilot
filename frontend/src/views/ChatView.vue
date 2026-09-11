@@ -157,14 +157,14 @@ const parsedTrace = computed(() => (m) => {
             >
               <div
                 v-if="m.role === 'assistant'"
-                class="chat-markdown text-sm leading-relaxed"
+                class="markdown-content text-sm leading-relaxed"
                 v-html="renderMarkdown(m.content)"
               />
               <p v-else class="text-sm whitespace-pre-wrap leading-relaxed">{{ m.content }}</p>
 
               <div v-if="m.role === 'assistant' && m.reasoning" class="mt-2 pt-2 border-t border-surface-700/60">
                 <div
-                  class="chat-markdown chat-markdown-reasoning text-xs italic text-surface-400 leading-relaxed"
+                  class="markdown-content text-xs italic text-surface-400 leading-relaxed [&_strong]:text-surface-300"
                   v-html="renderMarkdown(m.reasoning)"
                 />
               </div>
@@ -222,93 +222,3 @@ const parsedTrace = computed(() => (m) => {
     </div>
   </div>
 </template>
-
-<style scoped>
-/* Tailwind's preflight strips list/heading/link styling by default, but
-   this markup comes from v-html (rendered Markdown), not template classes
-   we control per-element — so it needs its own rules restored here. */
-.chat-markdown :deep(p) {
-  margin: 0 0 0.5em;
-}
-.chat-markdown :deep(p:last-child) {
-  margin-bottom: 0;
-}
-.chat-markdown :deep(strong) {
-  font-weight: 600;
-  color: inherit;
-}
-.chat-markdown :deep(ul),
-.chat-markdown :deep(ol) {
-  margin: 0.4em 0 0.6em;
-  padding-left: 1.4em;
-}
-.chat-markdown :deep(ul) {
-  list-style: disc;
-}
-.chat-markdown :deep(ol) {
-  list-style: decimal;
-}
-.chat-markdown :deep(li) {
-  margin: 0.15em 0;
-}
-.chat-markdown :deep(li) > :deep(p) {
-  margin: 0;
-}
-.chat-markdown :deep(code) {
-  font-family: theme('fontFamily.mono');
-  font-size: 0.85em;
-  background: rgba(255, 255, 255, 0.08);
-  padding: 0.1em 0.35em;
-  border-radius: 4px;
-}
-.chat-markdown :deep(pre) {
-  background: theme('colors.surface.950');
-  border: 1px solid theme('colors.surface.700');
-  border-radius: 6px;
-  padding: 0.6em 0.8em;
-  margin: 0.5em 0;
-  overflow-x: auto;
-}
-.chat-markdown :deep(pre code) {
-  background: none;
-  padding: 0;
-}
-.chat-markdown :deep(a) {
-  color: theme('colors.accent.light');
-  text-decoration: underline;
-}
-.chat-markdown :deep(blockquote) {
-  border-left: 2px solid theme('colors.surface.600');
-  padding-left: 0.7em;
-  margin: 0.4em 0;
-  color: theme('colors.surface.400');
-}
-.chat-markdown :deep(h1),
-.chat-markdown :deep(h2),
-.chat-markdown :deep(h3),
-.chat-markdown :deep(h4) {
-  font-weight: 600;
-  margin: 0.6em 0 0.3em;
-}
-.chat-markdown :deep(hr) {
-  border: none;
-  border-top: 1px solid theme('colors.surface.700');
-  margin: 0.6em 0;
-}
-.chat-markdown :deep(table) {
-  border-collapse: collapse;
-  margin: 0.5em 0;
-  font-size: 0.9em;
-}
-.chat-markdown :deep(th),
-.chat-markdown :deep(td) {
-  border: 1px solid theme('colors.surface.700');
-  padding: 0.3em 0.6em;
-}
-
-/* The reasoning block keeps its italic/muted styling even through Markdown
-   (e.g. a bolded word inside it shouldn't jump to full white). */
-.chat-markdown-reasoning :deep(strong) {
-  color: theme('colors.surface.300');
-}
-</style>
